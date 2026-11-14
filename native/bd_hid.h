@@ -54,6 +54,10 @@ void bd_hid_close(struct bd_hid_link *link);
 [[nodiscard]] bool bd_hid_open_session(struct bd_hid_link *link);
 [[nodiscard]] bool bd_hid_close_session(struct bd_hid_link *link);
 
+/* Frame cru 81 05 00 51 <mode>: troca o modo do gamepad (1 DInput, 2 XInput,
+ * 3 DS4, 4 Switch). E como o app oficial devolve o controle ao XInput. */
+[[nodiscard]] bool bd_hid_mode_switch(struct bd_hid_link *link, uint8_t mode);
+
 /* Comando Type A (byte de comando + u32 no offset 4): 0x09 seleciona o slot,
  * 0x0A/0x0F trocam de plataforma. true = device ecoou o comando. */
 [[nodiscard]] bool bd_hid_type_a(struct bd_hid_link *link, uint8_t command,

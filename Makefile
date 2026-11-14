@@ -28,7 +28,7 @@ $(BUILD)/8bdgui.o: native/8bdgui.c | $(BUILD)
 $(BUILD)/8bdgui: $(BUILD)/8bdgui.o $(BUILD)/bd_core.o $(BUILD)/bd_hid.o
 	$(CC) $(LDFLAGS) -o $@ $^ $(GTK_LIBS) -lm
 
-$(BUILD)/bd_cli: $(BUILD)/bd_cli.o $(BUILD)/bd_hid.o $(BUILD)/bd_core.o
+$(BUILD)/bd_cli: $(BUILD)/bd_cli.o $(BUILD)/bd_hid.o $(BUILD)/bd_core.o $(BUILD)/bd_usb.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(BUILD)/bd_build: $(BUILD)/bd_build.o $(BUILD)/bd_core.o

@@ -1,12 +1,16 @@
+#define _GNU_SOURCE
+
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
 #include "bd_hid.h"
+#include "bd_usb.h"
 
 static constexpr uint16_t READ_COMMAND = 0x0002;
 static constexpr uint16_t WRITE_COMMAND = 0x0001;
@@ -21,8 +25,11 @@ static void print_usage(FILE *stream, const char *program)
             "     %s dump <arquivo>\n"
             "     %s write <arquivo> [--verify] [--dry-run] [--no-commit]\n"
             "            [--first-chunk] [--pid N] [--device CAMINHO]\n"
+            "     %s patch <slot> [--p1 NOME] [--p2 NOME] [--mode 0|1|3]\n"
+            "     %s hid                       ativa o HID (XInput -> DInput)\n"
+            "     %s mode <1|2|3|4>            changeDinput_CMD (1 DInput, 2 XInput)\n"
             "     %s info\n",
-            program, program, program, program);
+            program, program, program, program, program, program, program);
 }
 
 [[nodiscard]] static bool parse_pid(const char *text, uint16_t *pid)
@@ -266,6 +273,22 @@ static int command_info(void)
 }
 
 
+
+/* Sem hidraw (controle em XInput) troca para DInput pela interface vendor, para
+ * patch/write funcionarem sem o usuario apertar HOME. */
+static bool ensure_hid(struct bd_hid_device *devices)
+{
+    if (bd_hid_find(devices, BD_HID_MAX_DEVICES) > 0) return true;
+    if (!bd_usb_has_xinput()) return false;
+    printf("controle em XInput: ativando o HID (DInput)...\n");
+    if (!bd_usb_switch_mode(1)) return false;
+    for (int attempt = 0; attempt < 60; attempt++) {
+        usleep(100000);
+        if (bd_hid_find(devices, BD_HID_MAX_DEVICES) > 0) return true;
+    }
+    return false;
+}
+
 /* Lê o record, altera SÓ o slot indicado (P1/P2 e nome) e grava — tudo numa
  * sessão, como o app oficial faz. Preserva os outros perfis. */
 static int command_patch(int argc, char **argv)
@@ -287,7 +310,7 @@ static int command_patch(int argc, char **argv)
     }
 
     struct bd_hid_device devices[BD_HID_MAX_DEVICES];
-    if (bd_hid_find(devices, BD_HID_MAX_DEVICES) <= 0) {
+    if (!ensure_hid(devices)) {
         fprintf(stderr, "nenhum controle 2dc8 com HID encontrado.\n"
                         "Em XInput (2dc8:3106) o controle nao expoe HID: aperte HOME ou\n"
                         "replugue o cabo. Para o HID ficar sempre disponivel, grave com\n"
@@ -502,6 +525,58 @@ int main(int argc, char **argv)
         (void)bd_hid_close_session(&link);
     bd_hid_close(&link);
         return acked ? 0 : 1;
+    }
+    if (strcmp(command, "hid") == 0) {
+        if (argc != 2) {
+            fprintf(stderr, "hid nao aceita argumentos\n");
+            return 2;
+        }
+        struct bd_hid_device devices[BD_HID_MAX_DEVICES];
+        if (bd_hid_find(devices, BD_HID_MAX_DEVICES) > 0) {
+            printf("HID ja disponivel: %s\n", devices[0].path);
+            return 0;
+        }
+        if (!bd_usb_has_xinput()) {
+            fprintf(stderr, "sem 2dc8:3106 e sem hidraw: conecte o controle por cabo\n");
+            return 1;
+        }
+        printf("controle em XInput: mandando changeDinput_CMD (DInput)...\n");
+        if (!bd_usb_switch_mode(1)) return 1;
+        for (int attempt = 0; attempt < 60; attempt++) {
+            usleep(100000);
+            if (bd_hid_find(devices, BD_HID_MAX_DEVICES) > 0) {
+                printf("HID disponivel em %s\n", devices[0].path);
+                return 0;
+            }
+        }
+        fprintf(stderr, "o controle nao re-enumerou como 3012\n");
+        return 1;
+    }
+    if (strcmp(command, "mode") == 0) {
+        if (argc != 3) {
+            fprintf(stderr, "uso: %s mode <1=DInput 2=XInput 3=DS4 4=Switch>\n", argv[0]);
+            return 2;
+        }
+        const unsigned long mode = strtoul(argv[2], nullptr, 10);
+        if (mode < 1 || mode > 4) {
+            fprintf(stderr, "modo invalido: %s\n", argv[2]);
+            return 2;
+        }
+        struct bd_hid_device devices[BD_HID_MAX_DEVICES];
+        if (bd_hid_find(devices, BD_HID_MAX_DEVICES) <= 0) {
+            if (!bd_usb_switch_mode((uint8_t)mode)) {
+                fprintf(stderr, "sem HID e sem 2dc8:3106 para trocar de modo\n");
+                return 1;
+            }
+            printf("changeDinput_CMD mode=%lu -> enviado no endpoint vendor\n", mode);
+            return 0;
+        }
+        struct bd_hid_link link = {.fd = -1, .pid = devices[0].pid};
+        if (!bd_hid_open(&link, devices[0].path, devices[0].pid)) return 1;
+        const bool sent = bd_hid_mode_switch(&link, (uint8_t)mode);
+        printf("changeDinput_CMD mode=%lu -> %s\n", mode, sent ? "enviado" : "falhou");
+        bd_hid_close(&link);
+        return sent ? 0 : 1;
     }
     if (strcmp(command, "info") == 0) {
         if (argc != 2) {

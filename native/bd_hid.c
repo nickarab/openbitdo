@@ -176,6 +176,14 @@ static bool link_send_raw(const struct bd_hid_link *link, const uint8_t frame[BD
     return false;
 }
 
+/* changeDinput_CMD: a troca de modo do firmware. m = 1 DInput, 2 XInput, 3 DS4,
+ * 4 Switch (tabela do app oficial, classe DinputHid). Vai como frame cru. */
+bool bd_hid_mode_switch(struct bd_hid_link *link, uint8_t mode)
+{
+    uint8_t frame[BD_REPORT_LEN] = {0x81, 0x05, 0x00, 0x51, mode};
+    return link_send_raw(link, frame);
+}
+
 bool bd_hid_open_session(struct bd_hid_link *link)
 {
     uint8_t enter[BD_REPORT_LEN] = {0x81, 0x05, 0x00, 0x21, 0x01};
