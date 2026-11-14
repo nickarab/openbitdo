@@ -1,9 +1,7 @@
 #define _GNU_SOURCE
 
 #include <errno.h>
-#include <stdbool.h>
 #include <stdint.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -262,11 +260,7 @@ static bool ensure_hid(struct bd_hid_device *devices)
     if (!bd_usb_has_xinput()) return false;
     printf("controle em XInput: ativando o HID (DInput)...\n");
     if (!bd_usb_switch_mode(1)) return false;
-    for (int attempt = 0; attempt < 60; attempt++) {
-        usleep(100000);
-        if (bd_hid_find(devices, BD_HID_MAX_DEVICES) > 0) return true;
-    }
-    return false;
+    return bd_hid_wait_for_device(devices, BD_HID_MAX_DEVICES, BD_HID_REENUM_TIMEOUT_MS) > 0;
 }
 
 /* Lê o record, altera SÓ o slot indicado (P1/P2 e nome) e grava — tudo numa
@@ -510,12 +504,9 @@ int main(int argc, char **argv)
         }
         printf("controle em XInput: mandando changeDinput_CMD (DInput)...\n");
         if (!bd_usb_switch_mode(1)) return 1;
-        for (int attempt = 0; attempt < 60; attempt++) {
-            usleep(100000);
-            if (bd_hid_find(devices, BD_HID_MAX_DEVICES) > 0) {
-                printf("HID disponivel em %s\n", devices[0].path);
-                return 0;
-            }
+        if (bd_hid_wait_for_device(devices, BD_HID_MAX_DEVICES, BD_HID_REENUM_TIMEOUT_MS) > 0) {
+            printf("HID disponivel em %s\n", devices[0].path);
+            return 0;
         }
         fprintf(stderr, "o controle nao re-enumerou como 3012\n");
         return 1;

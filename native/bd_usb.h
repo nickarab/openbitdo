@@ -10,7 +10,6 @@
 #ifndef BD_USB_H
 #define BD_USB_H
 
-#include <stdbool.h>
 #include <stdint.h>
 
 /* Troca o modo do gamepad que estiver em 2dc8:3106.

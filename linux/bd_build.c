@@ -1,11 +1,10 @@
 /*
  * bd_build — monta e grava em arquivo o record de perfil de 1652 B.
- * Layout: ../re/03-profile.md §5. O arquivo é o payload cru de
+ * Layout: docs/protocol.md §6. O arquivo é o payload cru de
  * bd_hid_write_record: header Tipo C e chunking pertencem ao transporte.
  */
 #define _POSIX_C_SOURCE 200809L
 
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,46 +13,26 @@
 
 #include "bd_core.h"
 
-static constexpr uint32_t CONFIG_ENABLED = 0x20200911u;  /* medido */
 static constexpr uint8_t RANGE_MIN = 0;
 static constexpr uint8_t RANGE_MAX = 255;
 static constexpr size_t RUMBLE_SLOT_SIZE = 12;            /* flag + zoom_out[2] */
 static constexpr size_t RANGE_SLOT_SIZE = 8;              /* flag + range[2] */
 static constexpr size_t FEATURE_SLOT_SIZE = 8;            /* flag + featrue */
 static constexpr size_t MAP_SLOT_SIZE = 4 + BD_NKEYS * 4; /* flag + key[20] */
-static constexpr size_t MODE_COUNT = sizeof bd_mode_names / sizeof bd_mode_names[0];
 
-/* Mapa identidade: cada entrada física emite a si mesma (ordem MAP_KEY_E + P1/P2).
- * Valores copiados do record que o app oficial grava — conferidos no hardware. */
-static const uint32_t identity_map[BD_NKEYS] = {
-    0x2000,   /* A */
-    0x1000,   /* B */
-    0x10,     /* X */
-    0x20,     /* Y */
-    0x400,    /* L1 */
-    0x800,    /* R1 */
-    0x4000,   /* L2 */
-    0x8000,   /* R2 */
-    0x2,      /* L3 */
-    0x4,      /* R3 */
-    0x8,      /* SELECT */
-    0x1,      /* START */
-    0x10000,  /* STAR */
-    0x20000,  /* HOME */
-    0x200,    /* UP */
-    0x100,    /* DOWN */
-    0x80,     /* LEFT */
-    0x40,     /* RIGHT */
-    0x0,      /* P1 — sem ação por padrão */
-    0x0,      /* P2 — sem ação por padrão */
-};
+/* Mapa identidade, como o app oficial grava: cada tecla física emite a ação de
+ * mesmo nome (bd_key_short[k] em bd_actions); P1/P2 (18/19) não emitem nada. */
+static uint32_t identity_value(size_t key)
+{
+    return key < BD_NKEYS - 2 ? bd_action_value(bd_key_short[key]) : 0;
+}
 
 static void set_full_range(uint8_t *record, size_t base, size_t edited_slot, bool patch_only)
 {
     for (size_t slot = 0; slot < BD_SLOTS; ++slot) {
         if (patch_only && slot != edited_slot) continue;
         const size_t at = base + slot * RANGE_SLOT_SIZE;
-        bd_wr32(record, at, CONFIG_ENABLED);
+        bd_wr32(record, at, BD_FEATURE_MASK);
         /* range[0] = eixo esquerdo, range[1] = direito; cada par é início/fim */
         record[at + 4] = RANGE_MIN;
         record[at + 5] = RANGE_MAX;
@@ -68,7 +47,7 @@ static int usage(const char *program)
             "uso: %s <saida.bin> [--from BASE.bin] [--mode N] [--slot N]\n"
             "          [--p1 ACAO] [--p2 ACAO]\n"
             "  --from: parte de um record de 1652 B e altera só o slot indicado\n"
-            "  modo: 0..3 (0=Switch, 1=DInput, 3=XInput) | slot: 0..%d\n"
+            "  modo: 0..3 (0=Switch, 1=DInput, 2=DS4, 3=XInput) | slot: 0..%d\n"
             "  ACAO: nome (A,B,X,Y,L1,R1,L2,R2,L3,R3,SELECT,START,HOME,MENU,\n"
             "  UP,DOWN,LEFT,RIGHT,SCREENSHOT,TURBO_SINGLE,TURBO_AUTO,P1,P2,SWAP,\n"
             "  BT_CON), none, ou valor numérico (0x2000)\n",
@@ -103,7 +82,7 @@ int main(int argc, char **argv)
         const char *const text = argv[i + 1];
 
         if (strcmp(option, "--mode") == 0) {
-            if (!bd_parse_u32(text, MODE_COUNT - 1, &mode))
+            if (!bd_parse_u32(text, BD_MODES - 1, &mode))
                 return invalid_value(option, text);
         } else if (strcmp(option, "--from") == 0) {
             from_path = text;
@@ -122,10 +101,9 @@ int main(int argc, char **argv)
         }
     }
 
-    uint8_t record[BD_REC_LEN];
     /* 0x00C (crc_value) fica zerado: é contador do device, que sobrescreve o
-     * valor enviado. Não é CRC do record (14-write-persist.md). */
-    memset(record, 0, sizeof record);
+     * valor enviado. Não é CRC do record (docs/write-persistence.md). */
+    uint8_t record[BD_REC_LEN] = {};
     const bool patch_only = from_path != nullptr;
     if (patch_only) {
         FILE *base = fopen(from_path, "rb");
@@ -149,8 +127,8 @@ int main(int argc, char **argv)
     for (size_t s = 0; s < BD_SLOTS; ++s) {
         if (patch_only && s != (size_t)slot) continue;
         bd_wr32(record, BD_OFF_FLAG + s * 4, BD_FEATURE_MASK);
-        bd_wr32(record, BD_OFF_RUM + s * RUMBLE_SLOT_SIZE, CONFIG_ENABLED);
-        bd_wr32(record, BD_OFF_FEAT + s * FEATURE_SLOT_SIZE, CONFIG_ENABLED);
+        bd_wr32(record, BD_OFF_RUM + s * RUMBLE_SLOT_SIZE, BD_FEATURE_MASK);
+        bd_wr32(record, BD_OFF_FEAT + s * FEATURE_SLOT_SIZE, BD_FEATURE_MASK);
 
         char name[BD_NAME_UNITS];
         snprintf(name, sizeof name, "Profile %zu", s + 1);
@@ -167,9 +145,9 @@ int main(int argc, char **argv)
     for (size_t s = 0; s < BD_SLOTS; ++s) {
         if (patch_only && s != (size_t)slot) continue;
         const size_t at = BD_OFF_MAP + s * MAP_SLOT_SIZE;
-        bd_wr32(record, at, CONFIG_ENABLED);
+        bd_wr32(record, at, BD_FEATURE_MASK);
         for (size_t key = 0; key < BD_NKEYS; ++key)
-            bd_wr32(record, at + 4 + key * 4, identity_map[key]);
+            bd_wr32(record, at + 4 + key * 4, identity_value(key));
     }
 
     /* P1/P2 são as entradas 18/19 de key[]; sobrescrever só no slot editado. */

@@ -7,13 +7,12 @@
  * perfil de 1652 bytes.
  *
  * Protocolo, structs e CRC recuperados por engenharia reversa de
- * 8BitDoAdvance.dll + assembly .NET do app oficial (ver ../re/01..09*.md).
+ * 8BitDoAdvance.dll + assembly .NET do app oficial (ver docs/protocol.md).
  */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <math.h>
 #include <stdarg.h>
-#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -444,7 +443,7 @@ static gboolean on_io_done(gpointer data)
     refresh_ui();
     set_status("sincronizado: slot %u · modo %s · contador %u · %d bytes",
                bd_rd16(record, BD_OFF_SLOT),
-               bd_rd16(record, BD_OFF_MODE) <= 3
+               bd_rd16(record, BD_OFF_MODE) < BD_MODES
                    ? bd_mode_names[bd_rd16(record, BD_OFF_MODE)] : "?",
                bd_rd32(record, BD_OFF_CRC), BD_REC_LEN);
     return G_SOURCE_REMOVE;
@@ -552,11 +551,8 @@ static gboolean on_hid_ready(gpointer data [[maybe_unused]])
 static gpointer ensure_hid_thread(gpointer data [[maybe_unused]])
 {
     if (bd_usb_switch_mode(1)) {
-        for (int attempt = 0; attempt < 60; attempt++) {
-            struct bd_hid_device probe[BD_HID_MAX_DEVICES];
-            if (bd_hid_find(probe, BD_HID_MAX_DEVICES) > 0) break;
-            g_usleep(100000);
-        }
+        struct bd_hid_device probe[BD_HID_MAX_DEVICES];
+        (void)bd_hid_wait_for_device(probe, BD_HID_MAX_DEVICES, BD_HID_REENUM_TIMEOUT_MS);
     }
     g_idle_add(on_hid_ready, nullptr);
     return nullptr;
@@ -824,10 +820,10 @@ static GtkWidget *page_profile(void)
     gtk_entry_set_placeholder_text(GTK_ENTRY(U.name_entry), "nome do perfil");
     g_signal_connect(U.name_entry, "activate", G_CALLBACK(on_name_activate), nullptr);
 
-    static const char *const MODE_NAMES[] = {
-        "Switch", "DInput", "(desconhecido)", "XInput", nullptr,
-    };
-    U.mode_dropdown = gtk_drop_down_new_from_strings(MODE_NAMES);
+    /* o índice do dropdown é o próprio gamepad_mode (0..3) */
+    const char *mode_names[BD_MODES + 1] = {};
+    for (size_t mode = 0; mode < BD_MODES; ++mode) mode_names[mode] = bd_mode_names[mode];
+    U.mode_dropdown = gtk_drop_down_new_from_strings(mode_names);
     g_signal_connect(U.mode_dropdown, "notify::selected",
                      G_CALLBACK(on_mode_changed), nullptr);
 
@@ -1148,8 +1144,7 @@ static int write_selftest(const char *path)
 
     int status = 1;
     if (written) {
-        uint8_t back[BD_REC_LEN];
-        memset(back, 0, sizeof back);
+        uint8_t back[BD_REC_LEN] = {};
         if (bd_hid_read_record(&link, back, nullptr)) {
             const size_t differences = bd_record_diff(wanted, back, nullptr);
             printf("releitura: %zu byte(s) divergente(s) fora dos campos do device\n", differences);

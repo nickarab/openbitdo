@@ -8,13 +8,13 @@
 #ifndef BD_HID_H
 #define BD_HID_H
 
-#include <stdbool.h>
 #include <stdint.h>
 
 #include "bd_core.h"
 
-#define BD_HID_MAX_DEVICES 32
-#define BD_HID_PATH_SIZE 64
+constexpr int BD_HID_MAX_DEVICES = 32;
+constexpr int BD_HID_PATH_SIZE = 64;
+constexpr int BD_HID_REENUM_TIMEOUT_MS = 6000;   /* espera após a troca de modo */
 
 struct bd_hid_device {
     char path[BD_HID_PATH_SIZE];
@@ -29,6 +29,13 @@ struct bd_hid_link {
 /* Enumera /sys/class/hidraw com VID 0x2dc8, preenchendo até capacity entradas.
  * Retorna quantas achou, ou -1 se /sys/class/hidraw não abrir. */
 [[nodiscard]] int bd_hid_find(struct bd_hid_device *devices, int capacity);
+
+/* Repete bd_hid_find a cada 100 ms até achar algum device ou passar timeout_ms
+ * (o controle leva ~1–2 s para re-enumerar depois da troca de modo; o diretório
+ * /sys/class/hidraw pode nem existir antes disso). Retorna o último bd_hid_find:
+ * > 0 achou, 0 não apareceu, -1 sem /sys/class/hidraw. */
+[[nodiscard]] int bd_hid_wait_for_device(struct bd_hid_device *devices, int capacity,
+                                         int timeout_ms);
 
 /* Abre em O_NONBLOCK: com o device sem drenar, write() bloquearia para sempre.
  * Em erro retorna false e link->fd fica -1. */
@@ -65,11 +72,12 @@ void bd_hid_close(struct bd_hid_link *link);
                                 uint32_t parameter);
 
 /* Lê os BD_REC_LEN (0x674) bytes do record de perfil. false = leitura incompleta. */
-[[nodiscard]] bool bd_hid_read_record(struct bd_hid_link *link, uint8_t *record,
+[[nodiscard]] bool bd_hid_read_record(struct bd_hid_link *link, uint8_t record[static BD_REC_LEN],
                                       volatile int *progress);
 
 /* Grava o record em chunks de 45 B, cada um confirmado pelo device, e fecha com o
  * commit cmd 6 / subcmd 0x15. false = parou de confirmar um chunk ou o commit falhou. */
-[[nodiscard]] bool bd_hid_write_record(struct bd_hid_link *link, const uint8_t *record);
+[[nodiscard]] bool bd_hid_write_record(struct bd_hid_link *link,
+                                       const uint8_t record[static BD_REC_LEN]);
 
 #endif /* BD_HID_H */

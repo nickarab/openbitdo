@@ -46,18 +46,13 @@ static constexpr uint16_t CRC_PIDS[] = {
 };
 static constexpr size_t CRC_PID_COUNT = sizeof CRC_PIDS / sizeof CRC_PIDS[0];
 
-static bool pid_is_in_crc_table(uint16_t pid)
+bool bd_pid_uses_crc(uint16_t pid)
 {
     for (size_t index = 0; index < CRC_PID_COUNT; ++index) {
         if (CRC_PIDS[index] == pid)
             return true;
     }
     return false;
-}
-
-int bd_pid_uses_crc(uint16_t pid)
-{
-    return pid_is_in_crc_table(pid) ? 1 : 0;
 }
 
 static constexpr size_t RECORD_FLAG_BYTES = 4;
@@ -210,7 +205,7 @@ static void convert_utf8_to_utf16le(const char *restrict utf8,
     }
 }
 
-void bd_name_get(const uint8_t *restrict record, int slot,
+void bd_name_get(const uint8_t record[restrict static BD_REC_LEN], int slot,
                  char *restrict out, size_t out_size)
 {
     if (out_size == 0)
@@ -232,76 +227,18 @@ void bd_name_get(const uint8_t *restrict record, int slot,
     out[output_length] = '\0';
 }
 
-void bd_name_set(uint8_t *restrict record, int slot, const char *restrict utf8)
+void bd_name_set(uint8_t record[restrict static BD_REC_LEN], int slot,
+                 const char *restrict utf8)
 {
     uint8_t *const field = record + BD_OFF_NAME + (size_t)slot * RECORD_NAME_BYTES;
     memset(field, 0, RECORD_NAME_BYTES);
     convert_utf8_to_utf16le(utf8 != nullptr ? utf8 : "", field, BD_NAME_UNITS - 1);
 }
 
-/* Bitmasks de KEY_*_MAP (04-managed.md §(c.4), .cctor de ConfidentialData). */
-enum bd_button_mask : uint32_t {
-    BD_MASK_L3 = 0x0000001,
-    BD_MASK_R3 = 0x0000002,
-    BD_MASK_SELECT = 0x0000004,
-    BD_MASK_START = 0x0000008,
-    BD_MASK_X = 0x0000010,
-    BD_MASK_Y = 0x0000020,
-    BD_MASK_RIGHT = 0x0000040,
-    BD_MASK_LEFT = 0x0000080,
-    BD_MASK_DOWN = 0x0000100,
-    BD_MASK_UP = 0x0000200,
-    BD_MASK_L1 = 0x0000400,
-    BD_MASK_R1 = 0x0000800,
-    BD_MASK_B = 0x0001000,
-    BD_MASK_A = 0x0002000,
-    BD_MASK_L2 = 0x0004000,
-    BD_MASK_HOME = 0x0008000,
-    BD_MASK_MENU = 0x0010000,
-    BD_MASK_R2 = 0x0020000,
-    BD_MASK_BT_CON = 0x0040000,
-    BD_MASK_SCREENSHOT = 0x0400000,
-    BD_MASK_TURBO_SINGLE = 0x0800000,
-    BD_MASK_TURBO_AUTO = 0x1000000,
-    BD_MASK_P1 = 0x2000000,
-    BD_MASK_P2 = 0x4000000,
-    BD_MASK_SWAP = 0x8000000,
-};
-
-/* Ordem do combo no app oficial. */
-enum bd_action_id {
-    BD_ACTION_NONE = 0,
-    BD_ACTION_A,
-    BD_ACTION_B,
-    BD_ACTION_X,
-    BD_ACTION_Y,
-    BD_ACTION_L1,
-    BD_ACTION_R1,
-    BD_ACTION_L2,
-    BD_ACTION_R2,
-    BD_ACTION_L3,
-    BD_ACTION_R3,
-    BD_ACTION_SELECT,
-    BD_ACTION_START,
-    BD_ACTION_HOME,
-    BD_ACTION_MENU,
-    BD_ACTION_BT_CON,
-    BD_ACTION_UP,
-    BD_ACTION_DOWN,
-    BD_ACTION_LEFT,
-    BD_ACTION_RIGHT,
-    BD_ACTION_SCREENSHOT,
-    BD_ACTION_TURBO_SINGLE,
-    BD_ACTION_TURBO_AUTO,
-    BD_ACTION_P1,
-    BD_ACTION_P2,
-    BD_ACTION_SWAP,
-    BD_ACTION_COUNT,
-};
-
+/* Ordem do combo no app oficial; valores medidos no record que ele grava
+ * (map identidade). */
 const struct bd_action bd_actions[] = {
     {"— (nenhum)", 0x0},
-    /* valores medidos no record que o app oficial grava (map identidade) */
     {"A", 0x2000}, {"B", 0x1000}, {"X", 0x10}, {"Y", 0x20},
     {"LB", 0x400}, {"RB", 0x800}, {"LT", 0x4000}, {"RT", 0x8000},
     {"LS", 0x2}, {"RS", 0x4}, {"VIEW", 0x8}, {"MENU", 0x1},
@@ -324,7 +261,6 @@ static const struct {
     {"SELECT", "VIEW"}, {"START", "MENU"},
 };
 
-static_assert(sizeof bd_actions / sizeof bd_actions[0] == (size_t)BD_ACTION_COUNT);
 
 uint32_t bd_action_value(const char *name)
 {
@@ -340,7 +276,7 @@ uint32_t bd_action_value(const char *name)
     return 0;
 }
 
-/* Ordem 0..17 de MAP_KEY_E (04-managed.md §(c.3)); P1/P2 em 18/19.
+/* Ordem 0..17 de MAP_KEY_E (enum do app oficial); P1/P2 em 18/19.
  * RT aqui é o d-pad →, não o gatilho direito. */
 enum bd_key_index {
     BD_KEY_A = 0,
@@ -413,23 +349,12 @@ const char *const bd_key_long[BD_NKEYS] = {
     [BD_KEY_P2] = "P2 (traseiro dir.)",
 };
 
-/* gamepad_mode: 0 Switch, 1 DInput, 3 XInput; 2 não observado (03-profile.md). */
-enum bd_mode_id {
-    BD_MODE_SWITCH = 0,
-    BD_MODE_DINPUT,
-    BD_MODE_UNKNOWN,
-    BD_MODE_XINPUT,
-    BD_MODE_COUNT,
+/* gamepad_mode: 0 Switch, 1 DInput, 3 XInput (medidos). O 2 não foi visto num
+ * record, mas BasicAdvanceUIData.setChangePlatform do app oficial o converte no
+ * changeModeType 3, o mesmo que DS4.start usa: é o modo DS4. */
+const char *const bd_mode_names[BD_MODES] = {
+    "Switch", "DInput", "DS4", "XInput",
 };
-
-const char *const bd_mode_names[BD_MODE_COUNT] = {
-    [BD_MODE_SWITCH] = "Switch",
-    [BD_MODE_DINPUT] = "DInput",
-    [BD_MODE_UNKNOWN] = "(?)",
-    [BD_MODE_XINPUT] = "XInput",
-};
-
-static_assert(BD_MODE_COUNT == 4);
 
 int bd_action_index(uint32_t value)
 {
@@ -437,7 +362,7 @@ int bd_action_index(uint32_t value)
         if (bd_actions[index].value == value)
             return (int)index;
     }
-    return BD_ACTION_NONE;
+    return 0;
 }
 
 bool bd_parse_u32(const char *text, uint32_t max, uint32_t *out)
@@ -525,7 +450,7 @@ static constexpr size_t HID_RESPONSE_OFF_REPORT_ID = 0;
 static constexpr size_t HID_RESPONSE_OFF_TAG = 1;
 static constexpr size_t HID_RESPONSE_OFF_SUBCOMMAND = 4;
 static constexpr size_t HID_RESPONSE_OFF_LENGTH = 6;
-static constexpr size_t HID_RESPONSE_OFF_PAYLOAD = 18;
+static constexpr size_t HID_RESPONSE_OFF_PAYLOAD = BD_RESP_DATA;
 
 static constexpr size_t TYPE_C_OFF_CMD = 0;
 static constexpr size_t TYPE_C_OFF_SUBCOMMAND = 2;
@@ -545,7 +470,7 @@ uint16_t bd_chunk_len(uint32_t offset)
 }
 
 size_t bd_hid_build_frame(const uint8_t *restrict payload, size_t payload_length,
-                          uint8_t out[restrict BD_REPORT_LEN])
+                          uint8_t out[restrict static BD_REPORT_LEN])
 {
     if (payload_length > BD_REPORT_LEN - HID_FRAME_HEADER_BYTES)
         return 0;
@@ -559,15 +484,15 @@ size_t bd_hid_build_frame(const uint8_t *restrict payload, size_t payload_length
     return payload_length + HID_FRAME_HEADER_BYTES;
 }
 
-int bd_hid_parse_resp(const uint8_t *in, size_t in_length,
-                      uint16_t *sub, uint16_t *length, const uint8_t **data)
+bool bd_hid_parse_resp(const uint8_t *in, size_t in_length,
+                       uint16_t *sub, uint16_t *length, const uint8_t **data)
 {
     if (in_length < BD_REPORT_LEN)
-        return 0;
+        return false;
     if (in[HID_RESPONSE_OFF_REPORT_ID] != BD_REPORT_IN)
-        return 0;
+        return false;
     if (in[HID_RESPONSE_OFF_TAG] != BD_TAG_ADVANCE)
-        return 0;
+        return false;
 
     if (sub != nullptr)
         *sub = bd_rd16(in, HID_RESPONSE_OFF_SUBCOMMAND);
@@ -575,12 +500,12 @@ int bd_hid_parse_resp(const uint8_t *in, size_t in_length,
         *length = bd_rd16(in, HID_RESPONSE_OFF_LENGTH);
     if (data != nullptr)
         *data = in + HID_RESPONSE_OFF_PAYLOAD;
-    return 1;
+    return true;
 }
 
 void bd_type_c_header(uint16_t cmd, uint16_t sub, uint16_t len, uint16_t crc,
                       uint32_t total, uint32_t offset,
-                      uint8_t out[restrict BD_HDR_LEN])
+                      uint8_t out[restrict static BD_HDR_LEN])
 {
     bd_wr16(out, TYPE_C_OFF_CMD, cmd);
     bd_wr16(out, TYPE_C_OFF_SUBCOMMAND, sub);

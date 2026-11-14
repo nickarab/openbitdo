@@ -109,8 +109,9 @@ docs/      protocol notes, udev rule, Hyprland notes
 
 - Firmware update is not implemented.
 - Macros are read but not editable.
-- Writing `mode = 3` (XInput) leaves the controller without HID until it is switched
-  back; use `--mode 1` to keep the configuration channel always available.
+- With `mode = 3` (XInput) the controller boots without HID; the app and `bd_cli`
+  switch it to DInput through the vendor endpoint whenever they need the
+  configuration channel.
 - The rumble "knock" used by the official app could not be reproduced as a mode
   switch and was removed; the vendor-endpoint frame replaces it.
 

@@ -1,5 +1,5 @@
 /* Implementação de bd_hid.h. Os limites de retentativa abaixo são os medidos
- * no hardware (../re/14-write-persist.md §"A causa real do travamento"): com o
+ * no hardware (docs/write-persistence.md, "A causa real do travamento"): com o
  * device parado, write() não drena e só POLLOUT libera a próxima tentativa. */
 #define _GNU_SOURCE
 #include "bd_hid.h"
@@ -10,6 +10,7 @@
 #include <poll.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 constexpr unsigned HID_BUS_USB = 0x0003;
@@ -17,7 +18,6 @@ constexpr uint16_t HID_COMMAND_READ = 0x0002;
 constexpr uint16_t HID_COMMAND_WRITE = 0x0001;
 constexpr uint16_t HID_COMMAND_COMMIT = 0x0006;
 constexpr uint16_t HID_COMMIT_SUBCOMMAND = 0x0015;
-constexpr int HID_RESPONSE_DATA_OFFSET = 18;
 constexpr int HID_SEND_ATTEMPTS = 20;
 constexpr int HID_SEND_POLL_MS = 100;
 constexpr int HID_REPLY_ATTEMPTS = 4;
@@ -26,6 +26,7 @@ constexpr int READ_FAST_FAIL_ATTEMPTS = 2;
 constexpr int READ_MAX_CONSECUTIVE_FAILURES = 8;
 constexpr int WRITE_MAX_CONSECUTIVE_FAILURES = 30;
 constexpr unsigned WRITE_RETRY_DELAY_US = 20000;
+constexpr int HID_WAIT_STEP_MS = 100;
 
 int bd_hid_find(struct bd_hid_device *devices, int capacity)
 {
@@ -59,6 +60,16 @@ int bd_hid_find(struct bd_hid_device *devices, int capacity)
     return count;
 }
 
+int bd_hid_wait_for_device(struct bd_hid_device *devices, int capacity, int timeout_ms)
+{
+    for (int waited = 0;; waited += HID_WAIT_STEP_MS) {
+        const int count = bd_hid_find(devices, capacity);
+        if (count > 0 || waited >= timeout_ms) return count;
+        struct timespec step = {.tv_nsec = HID_WAIT_STEP_MS * 1000000L};
+        nanosleep(&step, nullptr);
+    }
+}
+
 bool bd_hid_open(struct bd_hid_link *link, const char *path, uint16_t pid)
 {
     link->fd = open(path, O_RDWR | O_CLOEXEC | O_NONBLOCK);
@@ -72,19 +83,27 @@ void bd_hid_close(struct bd_hid_link *link)
     link->fd = -1;
 }
 
-[[nodiscard]] static bool link_send(const struct bd_hid_link *link, const uint8_t *payload,
-                                    size_t length)
+/* escreve um report de 64 B exatamente como recebido (frames de controle têm
+ * tag 0x00 e não seguem o envelope 04 — ver docs/protocol.md). */
+[[nodiscard]] static bool link_send_raw(const struct bd_hid_link *link, const uint8_t frame[BD_REPORT_LEN])
 {
-    uint8_t frame[BD_REPORT_LEN];
-    if (bd_hid_build_frame(payload, length, frame) == 0) return false;
     for (int attempt = 0; attempt < HID_SEND_ATTEMPTS; attempt++) {
-        ssize_t written = write(link->fd, frame, sizeof frame);
-        if (written == (ssize_t)sizeof frame) return true;
+        ssize_t written = write(link->fd, frame, BD_REPORT_LEN);
+        if (written == (ssize_t)BD_REPORT_LEN) return true;
         if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) return false;
         struct pollfd writable = {.fd = link->fd, .events = POLLOUT};
         if (poll(&writable, 1, HID_SEND_POLL_MS) <= 0) return false;
     }
     return false;
+}
+
+/* Envelope 81/len/04 em volta do payload e o mesmo envio do frame cru. */
+[[nodiscard]] static bool link_send(const struct bd_hid_link *link, const uint8_t *payload,
+                                    size_t length)
+{
+    uint8_t frame[BD_REPORT_LEN];
+    if (bd_hid_build_frame(payload, length, frame) == 0) return false;
+    return link_send_raw(link, frame);
 }
 
 [[nodiscard]] static bool link_recv(const struct bd_hid_link *link, uint8_t *buffer,
@@ -94,7 +113,7 @@ void bd_hid_close(struct bd_hid_link *link)
     if (poll(&readable, 1, timeout_ms) <= 0) return false;
     ssize_t received = read(link->fd, buffer, BD_REPORT_LEN);
     return received >= 0 && bd_hid_parse_resp(buffer, (size_t)received, nullptr, nullptr,
-                                              nullptr) != 0;
+                                              nullptr);
 }
 
 /* Tipo C: header de 16 bytes + payload; o device responde ecoando o cmd. */
@@ -119,15 +138,15 @@ bool bd_hid_execute(struct bd_hid_link *link, uint16_t command, uint16_t subcomm
         uint16_t response_command = 0;
         uint16_t response_length = 0;
         const uint8_t *response_data = nullptr;
-        if (bd_hid_parse_resp(response, sizeof response, &response_command,
-                              &response_length, &response_data) == 0)
+        if (!bd_hid_parse_resp(response, sizeof response, &response_command,
+                               &response_length, &response_data))
             continue;
         if (response_command != command) continue;
 
         if (progress) *progress = (int)offset;
         if (!out || out_capacity <= 0) return true;
 
-        int available = BD_REPORT_LEN - HID_RESPONSE_DATA_OFFSET;
+        int available = BD_REPORT_LEN - BD_RESP_DATA;
         int copy = response_length < available ? response_length : available;
         if (copy > out_capacity) copy = out_capacity;
         memcpy(out, response_data, (size_t)copy);
@@ -137,7 +156,8 @@ bool bd_hid_execute(struct bd_hid_link *link, uint16_t command, uint16_t subcomm
     return false;
 }
 
-bool bd_hid_read_record(struct bd_hid_link *link, uint8_t *record, volatile int *progress)
+bool bd_hid_read_record(struct bd_hid_link *link, uint8_t record[static BD_REC_LEN],
+                        volatile int *progress)
 {
     uint32_t offset = 0;
     int consecutive_failures = 0;
@@ -162,20 +182,6 @@ bool bd_hid_read_record(struct bd_hid_link *link, uint8_t *record, volatile int 
         consecutive_failures = 0;
     }
     return true;
-}
-
-/* escreve um report de 64 B exatamente como recebido (frames de controle têm
- * tag 0x00 e não seguem o envelope 04 — ver docs/protocol.md). */
-static bool link_send_raw(const struct bd_hid_link *link, const uint8_t frame[BD_REPORT_LEN])
-{
-    for (int attempt = 0; attempt < HID_SEND_ATTEMPTS; attempt++) {
-        ssize_t written = write(link->fd, frame, BD_REPORT_LEN);
-        if (written == (ssize_t)BD_REPORT_LEN) return true;
-        if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) return false;
-        struct pollfd writable = {.fd = link->fd, .events = POLLOUT};
-        if (poll(&writable, 1, HID_SEND_POLL_MS) <= 0) return false;
-    }
-    return false;
 }
 
 /* changeDinput_CMD: a troca de modo do firmware. m = 1 DInput, 2 XInput, 3 DS4,
@@ -206,24 +212,23 @@ bool bd_hid_type_a(struct bd_hid_link *link, uint8_t command, uint32_t parameter
 {
     uint8_t payload[BD_HDR_LEN] = {0};
     payload[0] = command;
-    memcpy(payload + 4, &parameter, sizeof parameter);
+    bd_wr32(payload, 4, parameter);          /* u32 LE, independente do host */
 
     if (!link_send(link, payload, sizeof payload)) return false;
 
     for (int attempt = 0; attempt < HID_REPLY_ATTEMPTS; attempt++) {
         uint8_t response[BD_REPORT_LEN];
         if (!link_recv(link, response, HID_REPLY_TIMEOUT_MS)) continue;
-        uint32_t echoed = 0;
-        memcpy(&echoed, response + 6, sizeof echoed);
+        const uint32_t echoed = bd_rd32(response, 6);
         if (response[2] == BD_TAG_ADVANCE && echoed == command) return true;
     }
     return false;
 }
 
-bool bd_hid_write_record(struct bd_hid_link *link, const uint8_t *record)
+bool bd_hid_write_record(struct bd_hid_link *link, const uint8_t record[static BD_REC_LEN])
 {
     /* crc_value (0x00C) NÃO é recalculado: o device sobrescreve o campo com um
-     * contador próprio (1, 2, …), confirmado no hardware (../re/14-write-persist.md). */
+     * contador próprio (1, 2, …), confirmado no hardware (docs/write-persistence.md). */
     uint32_t offset = 0;
     int consecutive_failures = 0;
 

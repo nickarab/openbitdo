@@ -19,7 +19,7 @@ Ou seja: o app oficial usa `HIDManage` **ou** `Xinput` (classes do assembly:
 `Advance.Hid.Xinput`, `XINPUT_M`, `xinputModeButton`, `XinputIsConnected`).
 Para este controle/modo, é **XUSB**. Insistir em HID estava errado.
 
-## Protocolo (do xpad.c, implementado em `native/xsusb.c`)
+## Protocolo XUSB (do xpad.c)
 
 | etapa | detalhe |
 |---|---|
@@ -56,22 +56,26 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="2dc8", TAG+="uaccess"
 SUBSYSTEM=="input",  ATTRS{idVendor}=="2dc8", TAG+="uaccess"
 ```
 
-## O que funciona hoje
+## Trocar de modo sem apertar HOME
 
-- `xsusb --watch` — estado ao vivo no terminal (botões, d-pad, sticks, gatilhos).
-- `xsusb --rumble L R` — vibração (L/R até 65535).
-- No app (`8bdgui`): aba **XInput (USB)** com estado ao vivo, barras de vibração e
-  **destaque dos botões sobre a arte** do controle; auto-conexão ao detectar o 0x3106.
+O firmware aceita o frame de troca de modo do app oficial (`changeDinput_CMD`,
+`81 05 00 51 <m>`, m = 1 DInput, 2 XInput, 3 DS4, 4 Switch) no **EP 0x02**, o
+mesmo endpoint OUT do rumble. Medido no hardware: 32 B com `m = 1` fazem o
+controle re-enumerar como `2dc8:3012`, com hidraw; `m = 2` volta para XInput.
 
-Importante: ao conectar, o app **toma a interface do `xpad`** (é o mesmo que o app
-oficial faz — o rodapé dele diz "*The controller and the profile will not work until
-the software is closed*"). O botão *Liberar XInput* devolve o pad ao sistema.
+- `native/bd_usb.c` faz isso por usbfs (`USBDEVFS_DISCONNECT_CLAIM` na
+  interface 0 e um URB de interrupção), sem libusb.
+- `bd_cli hid` ativa o HID; `bd_cli mode M` troca para qualquer modo.
+- O `8bdgui` faz a troca sozinho quando só encontra o `3106`.
 
-## O que NÃO existe por XUSB (limite honesto)
+O app oficial chega ao mesmo lugar por outro caminho: ele não fala usbfs, então
+manda pela API XInput uma sequência fixa de intensidades de rumble
+(`Advance.Hid.Xinput.subXinput_C`) que o firmware interpreta como "mudar para
+DInput". O frame pelo endpoint vendor é mais direto e é o que este projeto usa.
 
-O record de perfil de **1652 bytes** (mapeamentos, sticks, vibração, macros) usa o
-protocolo vendor HID (`0xFFA0`, reports `0x02`/`0x81`) — esse continua sendo o canal
-de configuração, disponível quando o controle está no modo software/dongle.
-As extensões vendor do 8BitDo sobre XUSB (`_usbrr_changeXinputMode`,
-`_changeUSBPlatform`) não foram decodificadas: exigiriam captura de tráfego USB do app
-oficial rodando no Windows.
+## O que NÃO existe por XUSB
+
+O record de perfil de **1652 bytes** (mapeamentos, sticks, vibração, macros) só
+passa pelo canal vendor HID (`0xFFA0`, reports `0x02`/`0x81`). Em XInput o
+caminho é sempre: trocar para DInput, configurar pelo hidraw e, se quiser,
+voltar com `bd_cli mode 2`.

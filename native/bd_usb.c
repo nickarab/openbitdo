@@ -12,10 +12,11 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#define BD_VID "2dc8"
-#define BD_PID_XINPUT "3106"
-#define BD_VENDOR_ENDPOINT 0x02
-#define BD_MODE_FRAME_LEN 32
+/* sysfs expõe idVendor/idProduct como texto hex de 4 dígitos */
+static const char USB_VENDOR_TEXT[] = "2dc8";
+static const char USB_PRODUCT_XINPUT_TEXT[] = "3106";
+constexpr unsigned char VENDOR_ENDPOINT = 0x02;
+constexpr size_t MODE_FRAME_LEN = 32;
 
 static bool read_attr(const char *device, const char *attribute, char *out, size_t capacity)
 {
@@ -47,7 +48,7 @@ static bool find_xinput(char *node, size_t capacity)
         char product[16];
         if (!read_attr(entry->d_name, "idVendor", vendor, sizeof vendor)) continue;
         if (!read_attr(entry->d_name, "idProduct", product, sizeof product)) continue;
-        if (strcmp(vendor, BD_VID) != 0 || strcmp(product, BD_PID_XINPUT) != 0) continue;
+        if (strcmp(vendor, USB_VENDOR_TEXT) != 0 || strcmp(product, USB_PRODUCT_XINPUT_TEXT) != 0) continue;
 
         char bus[8];
         char number[8];
@@ -89,13 +90,13 @@ bool bd_usb_switch_mode(uint8_t mode)
         return false;
     }
 
-    uint8_t frame[BD_MODE_FRAME_LEN] = {0x81, 0x05, 0x00, 0x51, mode};
+    uint8_t frame[MODE_FRAME_LEN] = {0x81, 0x05, 0x00, 0x51, mode};
 
     /* SUBMITURB exige o campo preenchido; o controle re-enumera assim que
      * processa o frame, entao o reap pode falhar com ENODEV — isso e sucesso. */
     struct usbdevfs_urb urb = {
         .type = USBDEVFS_URB_TYPE_INTERRUPT,
-        .endpoint = BD_VENDOR_ENDPOINT,
+        .endpoint = VENDOR_ENDPOINT,
         .buffer = frame,
         .buffer_length = sizeof frame,
     };

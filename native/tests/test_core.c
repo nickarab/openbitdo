@@ -87,8 +87,7 @@ static void test_crc(void)
 static void test_record_fields(void)
 {
     printf("[record fields]\n");
-    uint8_t rec[BD_REC_LEN];
-    memset(rec, 0, sizeof rec);
+    uint8_t rec[BD_REC_LEN] = {};
 
     bd_wr16(rec, BD_OFF_MODE, 3);
     bd_wr16(rec, BD_OFF_SLOT, 1);
@@ -125,8 +124,7 @@ static void test_record_fields(void)
 static void test_names(void)
 {
     printf("[nomes UTF-16LE]\n");
-    uint8_t rec[BD_REC_LEN];
-    memset(rec, 0, sizeof rec);
+    uint8_t rec[BD_REC_LEN] = {};
     char out[64];
 
     bd_name_set(rec, 0, "Profile 1");
@@ -221,14 +219,16 @@ static void test_tables(void)
         CHECK_EQ(bd_action_index(bd_action_value(bd_actions[i].name)), (long long)i);
     CHECK(strcmp(bd_mode_names[3], "XInput") == 0, "modo 3 = XInput");
     CHECK(strcmp(bd_mode_names[1], "DInput") == 0, "modo 1 = DInput");
+    CHECK(strcmp(bd_mode_names[0], "Switch") == 0, "modo 0 = Switch");
+    CHECK(strcmp(bd_mode_names[2], "DS4") == 0, "modo 2 = DS4");
+    CHECK(!bd_pid_uses_crc(0x0000), "PID desconhecido sem CRC");
 }
 
 /* --------------------------------------------------------------- 6. HID --- */
 static void test_hid(void)
 {
     printf("[framing HID]\n");
-    uint8_t pl[BD_HDR_LEN];
-    memset(pl, 0, sizeof pl);
+    uint8_t pl[BD_HDR_LEN] = {};
     bd_wr16(pl, 0, 2);                       /* cmd read */
     bd_wr16(pl, 4, 20);                      /* len */
     bd_wr32(pl, 8, BD_REC_LEN);              /* total */
@@ -256,24 +256,23 @@ static void test_hid(void)
     CHECK_EQ(bd_hid_build_frame(big, 62, fr), 0);     /* 62+3 > 64 -> rejeita */
 
     /* parse de resposta */
-    uint8_t r[BD_REPORT_LEN];
-    memset(r, 0, sizeof r);
+    uint8_t r[BD_REPORT_LEN] = {};
     r[0] = 0x02; r[1] = 0x04;
     bd_wr16(r, 4, 2);          /* subcmd echo */
     bd_wr16(r, 6, 20);         /* len */
     r[18] = 0xAB;
     uint16_t sub = 0, len = 0;
     const uint8_t *data = nullptr;
-    CHECK(bd_hid_parse_resp(r, sizeof r, &sub, &len, &data) == 1, "resposta válida");
+    CHECK(bd_hid_parse_resp(r, sizeof r, &sub, &len, &data), "resposta válida");
     CHECK_EQ(sub, 2);
     CHECK_EQ(len, 20);
     CHECK(data && data[0] == 0xAB, "payload em +18");
 
     r[0] = 0x81;
-    CHECK(bd_hid_parse_resp(r, sizeof r, nullptr, nullptr, nullptr) == 0,
+    CHECK(!bd_hid_parse_resp(r, sizeof r, nullptr, nullptr, nullptr),
           "report id errado rejeitado");
     r[0] = 0x02;
-    CHECK(bd_hid_parse_resp(r, 10, nullptr, nullptr, nullptr) == 0,
+    CHECK(!bd_hid_parse_resp(r, 10, nullptr, nullptr, nullptr),
           "report curto rejeitado");
 
     /* header Tipo C: cmd/sub/len/crc em 0/2/4/6 e total/offset em 8/12 */

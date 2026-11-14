@@ -87,9 +87,14 @@ assert names == ["Profile 1", "Profile 2", "Profile 3"], f"nomes={names!r}"
 mode, slot = struct.unpack_from("<HH", record, OFF_MODE)
 assert (mode, slot) == (1, 0), f"modo/slot padrão={mode}/{slot}"
 
-base = OFF_MAP + slot * MAP_SLOT_SIZE + 4
-keys = struct.unpack_from("<20I", record, base)
-assert keys[0] == 0x2000 and keys[1] == 0x1000, f"A/B=0x{keys[0]:x}/0x{keys[1]:x}"
+# Mapa identidade medido no record que o app oficial grava (ordem MAP_KEY_E):
+# A B X Y LB RB LT RT LS RS VIEW MENU STAR HOME D_UP D_DOWN D_LEFT D_RIGHT.
+IDENTITY = (0x2000, 0x1000, 0x10, 0x20, 0x400, 0x800, 0x4000, 0x8000, 0x2, 0x4,
+            0x8, 0x1, 0x10000, 0x20000, 0x200, 0x100, 0x80, 0x40)
+for s in range(3):
+    keys = struct.unpack_from("<20I", record, OFF_MAP + s * MAP_SLOT_SIZE + 4)
+    assert keys[:18] == IDENTITY, f"slot {s}: mapa={[hex(k) for k in keys[:18]]}"
+keys = struct.unpack_from("<20I", record, OFF_MAP + slot * MAP_SLOT_SIZE + 4)
 assert (keys[18], keys[19]) == (0x2000, 0x1000), f"P1/P2=0x{keys[18]:x}/0x{keys[19]:x}"
 
 # 0x00C é contador do device: a ferramenta não inventa o campo.
