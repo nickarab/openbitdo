@@ -67,6 +67,10 @@ struct bd_action {
 };
 extern const struct bd_action bd_actions[];
 extern const size_t bd_actions_count;
+
+/* Valor do record para um nome de acao; aceita alias (L1=LB, R2=RT_TRIGGER,
+ * SELECT=VIEW...) e devolve 0 quando nao conhece. */
+[[nodiscard]] uint32_t bd_action_value(const char *name);
 extern const char *const bd_key_short[BD_NKEYS];
 extern const char *const bd_key_long[BD_NKEYS];
 extern const char *const bd_mode_names[4];

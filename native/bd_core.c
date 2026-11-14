@@ -1,6 +1,7 @@
 #include "bd_core.h"
 
 #include <string.h>
+#include <strings.h>
 
 /* FUN_103c5960 (0x103c5960, app/8BitDoAdvance.dll): init 0xFFFF, polinômio
  * refletido 0x8408 (0x1021 CCITT com os bits invertidos), sem xorout e
@@ -299,16 +300,42 @@ const struct bd_action bd_actions[] = {
     {"— (nenhum)", 0x0},
     /* valores medidos no record que o app oficial grava (map identidade) */
     {"A", 0x2000}, {"B", 0x1000}, {"X", 0x10}, {"Y", 0x20},
-    {"L1", 0x400}, {"R1", 0x800}, {"L2", 0x4000}, {"R2", 0x8000},
-    {"L3", 0x2}, {"R3", 0x4}, {"SELECT", 0x8}, {"START", 0x1},
+    {"LB", 0x400}, {"RB", 0x800}, {"LT", 0x4000}, {"RT", 0x8000},
+    {"LS", 0x2}, {"RS", 0x4}, {"VIEW", 0x8}, {"MENU", 0x1},
     {"HOME", 0x20000}, {"STAR", 0x10000}, {"BT_CON", 0x40000},
-    {"UP", 0x200}, {"DOWN", 0x100}, {"LEFT", 0x80}, {"RIGHT", 0x40},
+    {"D_UP", 0x200}, {"D_DOWN", 0x100}, {"D_LEFT", 0x80}, {"D_RIGHT", 0x40},
     {"SCREENSHOT", 0x400000}, {"TURBO_SINGLE", 0x800000}, {"TURBO_AUTO", 0x1000000},
     {"P1", 0x2000000}, {"P2", 0x4000000}, {"SWAP", 0x8000000},
 };
 const size_t bd_actions_count = sizeof bd_actions / sizeof bd_actions[0];
 
+/* O controle e layout Xbox, mas L1/L2/L3 e o vocabulario do Switch e aparece em
+ * todo material da 8BitDo: os dois nomes precisam valer na linha de comando. */
+static const struct {
+    const char *alias;
+    const char *canonical;
+} bd_action_aliases[] = {
+    {"L1", "LB"}, {"R1", "RB"}, {"L2", "LT"}, {"R2", "RT"},
+    {"L3", "LS"}, {"R3", "RS"}, {"LEFT", "D_LEFT"}, {"RIGHT", "D_RIGHT"},
+    {"UP", "D_UP"}, {"DOWN", "D_DOWN"}, {"DN", "D_DOWN"}, {"LF", "D_LEFT"},
+    {"SELECT", "VIEW"}, {"START", "MENU"},
+};
+
 static_assert(sizeof bd_actions / sizeof bd_actions[0] == (size_t)BD_ACTION_COUNT);
+
+uint32_t bd_action_value(const char *name)
+{
+    for (size_t i = 0; i < bd_actions_count; i++)
+        if (strcasecmp(name, bd_actions[i].name) == 0) return bd_actions[i].value;
+
+    for (size_t i = 0; i < sizeof bd_action_aliases / sizeof bd_action_aliases[0]; i++) {
+        if (strcasecmp(name, bd_action_aliases[i].alias) != 0) continue;
+        for (size_t a = 0; a < bd_actions_count; a++)
+            if (strcmp(bd_action_aliases[i].canonical, bd_actions[a].name) == 0)
+                return bd_actions[a].value;
+    }
+    return 0;
+}
 
 /* Ordem 0..17 de MAP_KEY_E (04-managed.md §(c.3)); P1/P2 em 18/19.
  * RT aqui é o d-pad →, não o gatilho direito. */
@@ -342,20 +369,20 @@ const char *const bd_key_short[BD_NKEYS] = {
     [BD_KEY_B] = "B",
     [BD_KEY_X] = "X",
     [BD_KEY_Y] = "Y",
-    [BD_KEY_L1] = "L1",
-    [BD_KEY_R1] = "R1",
-    [BD_KEY_L2] = "L2",
-    [BD_KEY_R2] = "R2",
-    [BD_KEY_L3] = "L3",
-    [BD_KEY_R3] = "R3",
-    [BD_KEY_SELECT] = "SELECT",
-    [BD_KEY_START] = "START",
+    [BD_KEY_L1] = "LB",
+    [BD_KEY_R1] = "RB",
+    [BD_KEY_L2] = "LT",
+    [BD_KEY_R2] = "RT",
+    [BD_KEY_L3] = "LS",
+    [BD_KEY_R3] = "RS",
+    [BD_KEY_SELECT] = "VIEW",
+    [BD_KEY_START] = "MENU",
     [BD_KEY_STAR] = "STAR",
     [BD_KEY_HOME] = "HOME",
-    [BD_KEY_UP] = "UP",
-    [BD_KEY_DN] = "DN",
-    [BD_KEY_LF] = "LF",
-    [BD_KEY_RT] = "RT",
+    [BD_KEY_UP] = "D_UP",
+    [BD_KEY_DN] = "D_DOWN",
+    [BD_KEY_LF] = "D_LEFT",
+    [BD_KEY_RT] = "D_RIGHT",
     [BD_KEY_P1] = "P1",
     [BD_KEY_P2] = "P2",
 };
@@ -365,20 +392,20 @@ const char *const bd_key_long[BD_NKEYS] = {
     [BD_KEY_B] = "B",
     [BD_KEY_X] = "X",
     [BD_KEY_Y] = "Y",
-    [BD_KEY_L1] = "L1 (bumper esq.)",
-    [BD_KEY_R1] = "R1 (bumper dir.)",
-    [BD_KEY_L2] = "L2 (gatilho esq.)",
-    [BD_KEY_R2] = "R2 (gatilho dir.)",
-    [BD_KEY_L3] = "L3 (clique analógico esq.)",
-    [BD_KEY_R3] = "R3 (clique analógico dir.)",
-    [BD_KEY_SELECT] = "SELECT (−)",
-    [BD_KEY_START] = "START (+)",
+    [BD_KEY_L1] = "LB (bumper esq.)",
+    [BD_KEY_R1] = "RB (bumper dir.)",
+    [BD_KEY_L2] = "LT (gatilho esq.)",
+    [BD_KEY_R2] = "RT (gatilho dir.)",
+    [BD_KEY_L3] = "LS (clique analógico esq.)",
+    [BD_KEY_R3] = "RS (clique analógico dir.)",
+    [BD_KEY_SELECT] = "VIEW (−)",
+    [BD_KEY_START] = "MENU (+)",
     [BD_KEY_STAR] = "STAR (★)",
     [BD_KEY_HOME] = "HOME",
-    [BD_KEY_UP] = "UP (d-pad ↑)",
-    [BD_KEY_DN] = "DN (d-pad ↓)",
-    [BD_KEY_LF] = "LF (d-pad ←)",
-    [BD_KEY_RT] = "RT (d-pad →)",
+    [BD_KEY_UP] = "d-pad ↑",
+    [BD_KEY_DN] = "d-pad ↓",
+    [BD_KEY_LF] = "d-pad ←",
+    [BD_KEY_RT] = "d-pad →",
     [BD_KEY_P1] = "P1 (traseiro esq.)",
     [BD_KEY_P2] = "P2 (traseiro dir.)",
 };

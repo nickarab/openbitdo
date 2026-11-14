@@ -340,13 +340,23 @@ static int command_patch(int argc, char **argv)
     uint32_t p1 = 0;
     uint32_t p2 = 0;
     if (p1_name != nullptr) {
-        for (size_t a = 0; a < bd_actions_count; a++)
-            if (strcasecmp(bd_actions[a].name, p1_name) == 0) p1 = bd_actions[a].value;
+        p1 = bd_action_value(p1_name);
+        if (p1 == 0 && strcasecmp(p1_name, "none") != 0 && strcmp(p1_name, "-") != 0) {
+            fprintf(stderr, "acao desconhecida: %s\n", p1_name);
+            (void)bd_hid_close_session(&link);
+            bd_hid_close(&link);
+            return 2;
+        }
         bd_wr32(record, map_at + 18 * 4, p1);
     }
     if (p2_name != nullptr) {
-        for (size_t a = 0; a < bd_actions_count; a++)
-            if (strcasecmp(bd_actions[a].name, p2_name) == 0) p2 = bd_actions[a].value;
+        p2 = bd_action_value(p2_name);
+        if (p2 == 0 && strcasecmp(p2_name, "none") != 0 && strcmp(p2_name, "-") != 0) {
+            fprintf(stderr, "acao desconhecida: %s\n", p2_name);
+            (void)bd_hid_close_session(&link);
+            bd_hid_close(&link);
+            return 2;
+        }
         bd_wr32(record, map_at + 19 * 4, p2);
     }
 

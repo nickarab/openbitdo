@@ -89,13 +89,10 @@ static bool parse_action(const char *text, uint32_t *out)
         *out = (uint32_t)numeric;
         return true;
     }
-    for (size_t index = 0; index < bd_actions_count; ++index) {
-        if (strcasecmp(bd_actions[index].name, text) == 0) {
-            *out = bd_actions[index].value;
-            return true;
-        }
-    }
-    return false;
+    const uint32_t value = bd_action_value(text);
+    if (value == 0) return false;
+    *out = value;
+    return true;
 }
 
 static int usage(const char *program)

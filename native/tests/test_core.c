@@ -242,10 +242,18 @@ static void test_tables(void)
     /* 20 chaves: 18 do enum + P1/P2 no fim */
     CHECK(strcmp(bd_key_short[18], "P1") == 0, "indice 18 = P1 ('%s')", bd_key_short[18]);
     CHECK(strcmp(bd_key_short[19], "P2") == 0, "indice 19 = P2 ('%s')", bd_key_short[19]);
-    CHECK(strcmp(bd_key_short[16], "LF") == 0, "indice 16 = LF ('%s')", bd_key_short[16]);
-    CHECK(strcmp(bd_key_short[17], "RT") == 0, "indice 17 = RT/d-pad right ('%s')",
+    CHECK(strcmp(bd_key_short[16], "D_LEFT") == 0, "indice 16 = D_LEFT ('%s')", bd_key_short[16]);
+    CHECK(strcmp(bd_key_short[17], "D_RIGHT") == 0, "indice 17 = D_RIGHT ('%s')",
           bd_key_short[17]);
-    CHECK(strstr(bd_key_long[17], "d-pad") != nullptr, "RT rotulado como d-pad");
+    CHECK(strstr(bd_key_long[17], "d-pad") != nullptr, "d-pad right rotulado como d-pad");
+    /* o controle e layout Xbox: L1/R1/L2/R2/L3/R3 do vocabulario 8BitDo apontam
+     * para LB/RB/LT/RT/LS/RS, e RT e o gatilho (nao o d-pad). */
+    CHECK_EQ(bd_action_value("L1"), 0x400, "%#x");
+    CHECK_EQ(bd_action_value("R2"), 0x8000, "%#x");
+    CHECK_EQ(bd_action_value("RT"), 0x8000, "%#x");
+    CHECK_EQ(bd_action_value("D_RIGHT"), 0x40, "%#x");
+    CHECK_EQ(bd_action_value("VIEW"), 0x8, "%#x");
+    CHECK_EQ(bd_action_value("START"), 0x1, "%#x");
     CHECK(strcmp(bd_mode_names[3], "XInput") == 0, "modo 3 = XInput");
     CHECK(strcmp(bd_mode_names[1], "DInput") == 0, "modo 1 = DInput");
 }

@@ -98,10 +98,17 @@ cd linux
 
 `--mode`: `0`=Switch, `1`=DInput (padrão), `3`=XInput. `--slot` é `0..2`
 (padrão `0`); P1/P2 são as entradas 18/19 e a sobrescrita vale só para o slot
-escolhido. `--p1`/`--p2` aceitam nome (`A`, `B`, `X`, `Y`, `L1`, `R1`, `L2`,
-`R2`, `L3`, `R3`, `SELECT`, `START`, `HOME`, `MENU`, `UP`, `DOWN`, `LEFT`,
-`RIGHT`, `SCREENSHOT`, `TURBO_SINGLE`, `TURBO_AUTO`, `P1`, `P2`, `SWAP`,
-`BT_CON`) ou valor hex.
+escolhido. `--p1`/`--p2` aceitam nome (layout Xbox: `A`, `B`, `X`, `Y`, `LB`,
+`RB`, `LT`, `RT`, `LS`, `RS`, `VIEW`, `MENU`, `HOME`, `STAR`, `BT_CON`,
+`D_UP`, `D_DOWN`, `D_LEFT`, `D_RIGHT`, `SCREENSHOT`, `TURBO_SINGLE`,
+`TURBO_AUTO`, `P1`, `P2`, `SWAP`) ou valor hex. Os nomes do vocabulário
+8BitDo/Switch valem como alias: `L1`=`LB`, `R1`=`RB`, `L2`=`LT`, `R2`=`RT`,
+`L3`=`LS`, `R3`=`RS`, `SELECT`=`VIEW`, `START`=`MENU`, `UP`/`DOWN`/`LEFT`/
+`RIGHT`=`D_*`.
+
+Atenção: no record, `RT` é o **gatilho direito** (0x8000); o d-pad → é
+`D_RIGHT` (0x40). O índice 17 da tabela de chaves se chama `D_RIGHT` justamente
+para não confundir os dois.
 
 Exemplo real:
 
