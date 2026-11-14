@@ -70,9 +70,15 @@ MAP_SLOT_SIZE = 4 + 20 * 4
 record = open(sys.argv[1], "rb").read()
 assert len(record) == RECORD_LEN, f"tamanho {len(record)} != {RECORD_LEN}"
 
-# 0x000 é o feature mask exigido pelo firmware; 0x004/0x008 ficam "desabilitado".
+# 0x000/0x004/0x008: os três são feature mask (medido no record que o app
+# oficial grava; com 0xFFFFFFFF aqui o firmware não aplica o perfil).
 flags = struct.unpack_from("<3I", record, OFF_FLAG)
-assert flags == (0x20200911, 0xFFFFFFFF, 0xFFFFFFFF), f"flags={[hex(v) for v in flags]}"
+assert flags == (0x20200911, 0x20200911, 0x20200911), f"flags={[hex(v) for v in flags]}"
+
+# 0x1DC é a flag da seção macro: sem o magic o firmware descarta o record
+# inteiro, mesmo com os chunks e o commit ACKados.
+macro_flag = struct.unpack_from("<I", record, 0x1DC)[0]
+assert macro_flag == 0x20200911, f"macro flag=0x{macro_flag:x}"
 
 names = []
 for slot in range(3):

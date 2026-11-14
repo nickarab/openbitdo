@@ -15,7 +15,6 @@
 #include "bd_core.h"
 
 static constexpr uint32_t CONFIG_ENABLED = 0x20200911u;  /* medido */
-static constexpr uint32_t CONFIG_DISABLED = 0xFFFFFFFFu; /* slots não escritos */
 static constexpr uint8_t RANGE_MIN = 0;
 static constexpr uint8_t RANGE_MAX = 255;
 static constexpr size_t RUMBLE_SLOT_SIZE = 12;            /* flag + zoom_out[2] */
@@ -54,11 +53,13 @@ static const uint32_t identity_map[BD_NKEYS] = {
     0x0,      /* P2 — sem ação por padrão */
 };
 
-static void set_full_range(uint8_t *record, size_t base, size_t enabled_slot)
+static void set_full_range(uint8_t *record, size_t base, size_t enabled_slot, bool patch_only)
 {
     for (size_t slot = 0; slot < BD_SLOTS; ++slot) {
+        if (patch_only && slot != enabled_slot) continue;
         const size_t at = base + slot * RANGE_SLOT_SIZE;
-        bd_wr32(record, at, slot == enabled_slot ? CONFIG_ENABLED : CONFIG_DISABLED);
+        bd_wr32(record, at, CONFIG_ENABLED);
+        (void)enabled_slot;
         /* range[0] = eixo esquerdo, range[1] = direito; cada par é início/fim */
         record[at + 4] = RANGE_MIN;
         record[at + 5] = RANGE_MAX;
@@ -121,6 +122,7 @@ int main(int argc, char **argv)
         return usage(argv[0]);
 
     const char *const output = argv[1];
+    const char *from_path = nullptr;   /* base para patch de um slot só */
     unsigned long mode = 1; /* DInput */
     unsigned long slot = 0;
     uint32_t p1 = 0;
@@ -137,6 +139,8 @@ int main(int argc, char **argv)
         if (strcmp(option, "--mode") == 0) {
             if (!parse_number(text, &mode) || mode >= MODE_COUNT)
                 return invalid_value(option, text);
+        } else if (strcmp(option, "--from") == 0) {
+            from_path = text;
         } else if (strcmp(option, "--slot") == 0) {
             if (!parse_number(text, &slot) || slot >= BD_SLOTS)
                 return invalid_value(option, text);
@@ -156,6 +160,20 @@ int main(int argc, char **argv)
     /* 0x00C (crc_value) fica zerado: é contador do device, que sobrescreve o
      * valor enviado. Não é CRC do record (14-write-persist.md). */
     memset(record, 0, sizeof record);
+    const bool patch_only = from_path != nullptr;
+    if (patch_only) {
+        FILE *base = fopen(from_path, "rb");
+        if (base == nullptr) {
+            fprintf(stderr, "não abri %s\n", from_path);
+            return 1;
+        }
+        if (fread(record, 1, sizeof record, base) != sizeof record) {
+            fprintf(stderr, "%s não tem %zu bytes\n", from_path, sizeof record);
+            fclose(base);
+            return 1;
+        }
+        fclose(base);
+    }
 
     bd_wr16(record, BD_OFF_MODE, (uint16_t)mode);
     /* 0x012 é cur_slot: o device mantém o próprio valor (4 = "sem slot") após
@@ -163,21 +181,26 @@ int main(int argc, char **argv)
     bd_wr16(record, BD_OFF_SLOT, (uint16_t)slot);
 
     for (size_t s = 0; s < BD_SLOTS; ++s) {
-        bd_wr32(record, BD_OFF_FLAG + s * 4, s == (size_t)slot ? BD_FEATURE_MASK : CONFIG_DISABLED);
-        bd_wr32(record, BD_OFF_RUM + s * RUMBLE_SLOT_SIZE, s == (size_t)slot ? CONFIG_ENABLED : CONFIG_DISABLED);
-        bd_wr32(record, BD_OFF_FEAT + s * FEATURE_SLOT_SIZE, s == (size_t)slot ? CONFIG_ENABLED : CONFIG_DISABLED);
+        if (patch_only && s != (size_t)slot) continue;
+        bd_wr32(record, BD_OFF_FLAG + s * 4, BD_FEATURE_MASK);
+        bd_wr32(record, BD_OFF_RUM + s * RUMBLE_SLOT_SIZE, CONFIG_ENABLED);
+        /* o firmware descarta o record se a seção macro não tiver o magic
+     * (medido: record do app tem 0x20200911 em 0x1DC; o meu tinha 0) */
+    bd_wr32(record, BD_OFF_MAC, BD_FEATURE_MASK);
+    bd_wr32(record, BD_OFF_FEAT + s * FEATURE_SLOT_SIZE, CONFIG_ENABLED);
 
         char name[BD_NAME_UNITS];
         snprintf(name, sizeof name, "Profile %zu", s + 1);
         bd_name_set(record, (int)s, name);
     }
 
-    set_full_range(record, BD_OFF_JOY, (size_t)slot);
-    set_full_range(record, BD_OFF_TRG, (size_t)slot);
+    set_full_range(record, BD_OFF_JOY, (size_t)slot, patch_only);
+    set_full_range(record, BD_OFF_TRG, (size_t)slot, patch_only);
 
     for (size_t s = 0; s < BD_SLOTS; ++s) {
+        if (patch_only && s != (size_t)slot) continue;
         const size_t at = BD_OFF_MAP + s * MAP_SLOT_SIZE;
-        bd_wr32(record, at, s == (size_t)slot ? CONFIG_ENABLED : CONFIG_DISABLED);
+        bd_wr32(record, at, CONFIG_ENABLED);
         for (size_t key = 0; key < BD_NKEYS; ++key)
             bd_wr32(record, at + 4 + key * 4, identity_map[key]);
     }

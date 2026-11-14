@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "bd_hid.h"
 
@@ -91,6 +92,9 @@ static void print_usage(FILE *stream, const char *program)
         fprintf(stderr, "não abri %s\n", device->path);
         return false;
     }
+    /* o app oficial sempre abre a sessão antes de ler/gravar (ver docs/protocol.md) */
+    if (!bd_hid_open_session(link))
+        fprintf(stderr, "aviso: sessão de configuração não confirmou ACK\n");
     return true;
 }
 
@@ -144,6 +148,7 @@ static int command_dump(const char *path)
         return 1;
     uint8_t record[BD_REC_LEN];
     bool read = bd_hid_read_record(&link, record, nullptr);
+    (void)bd_hid_close_session(&link);
     bd_hid_close(&link);
     if (!read) {
         fprintf(stderr, "leitura do record falhou\n");
@@ -180,6 +185,7 @@ static int command_info(void)
     bool read = bd_hid_execute(&link, READ_COMMAND, 0, STATE_LENGTH, 0, nullptr,
                                (uint16_t)STATE_LENGTH, state, (int)sizeof state,
                                &state_length, nullptr);
+    (void)bd_hid_close_session(&link);
     bd_hid_close(&link);
     if (!read) {
         fprintf(stderr, "sem resposta ao cmd 0x%04x\n", (unsigned)READ_COMMAND);
@@ -257,6 +263,97 @@ static int command_info(void)
            (unsigned)bd_rd32(actual, BD_OFF_CRC),
            (unsigned)bd_rd16(actual, BD_OFF_SLOT));
     return true;
+}
+
+
+/* Lê o record, altera SÓ o slot indicado (P1/P2 e nome) e grava — tudo numa
+ * sessão, como o app oficial faz. Preserva os outros perfis. */
+static int command_patch(int argc, char **argv)
+{
+    if (argc < 1) return 2;
+    const int slot = atoi(argv[0]);
+    if (slot < 0 || slot >= BD_SLOTS) {
+        fprintf(stderr, "slot inválido: %s (0..%d)\n", argv[0], BD_SLOTS - 1);
+        return 2;
+    }
+    const char *p1_name = nullptr;
+    const char *p2_name = nullptr;
+    const char *mode_name = nullptr;
+    for (int i = 1; i + 1 < argc; i += 2) {
+        if (strcmp(argv[i], "--p1") == 0) p1_name = argv[i + 1];
+        else if (strcmp(argv[i], "--p2") == 0) p2_name = argv[i + 1];
+        else if (strcmp(argv[i], "--mode") == 0) mode_name = argv[i + 1];
+        else { fprintf(stderr, "opção desconhecida: %s\n", argv[i]); return 2; }
+    }
+
+    struct bd_hid_device devices[BD_HID_MAX_DEVICES];
+    if (bd_hid_find(devices, BD_HID_MAX_DEVICES) <= 0) {
+        fprintf(stderr, "nenhum controle 2dc8 com HID encontrado.\n"
+                        "Em XInput (2dc8:3106) o controle nao expoe HID: aperte HOME ou\n"
+                        "replugue o cabo. Para o HID ficar sempre disponivel, grave com\n"
+                        "  bd_cli patch <slot> --mode 1   (DInput)\n");
+        return 1;
+    }
+    struct bd_hid_link link = {.fd = -1, .pid = devices[0].pid};
+    if (!bd_hid_open(&link, devices[0].path, devices[0].pid)) {
+        fprintf(stderr, "não abri %s\n", devices[0].path);
+        return 1;
+    }
+    if (!bd_hid_open_session(&link)) {
+        fprintf(stderr, "sessão de configuração não abriu\n");
+        bd_hid_close(&link);
+        return 1;
+    }
+
+    uint8_t record[BD_REC_LEN];
+    if (!bd_hid_read_record(&link, record, nullptr)) {
+        fprintf(stderr, "leitura do record falhou\n");
+        (void)bd_hid_close_session(&link);
+        bd_hid_close(&link);
+        return 1;
+    }
+
+    const size_t map_at = BD_OFF_MAP + (size_t)slot * 84 + 4;
+    uint32_t p1 = 0;
+    uint32_t p2 = 0;
+    if (p1_name != nullptr) {
+        for (size_t a = 0; a < bd_actions_count; a++)
+            if (strcasecmp(bd_actions[a].name, p1_name) == 0) p1 = bd_actions[a].value;
+        bd_wr32(record, map_at + 18 * 4, p1);
+    }
+    if (p2_name != nullptr) {
+        for (size_t a = 0; a < bd_actions_count; a++)
+            if (strcasecmp(bd_actions[a].name, p2_name) == 0) p2 = bd_actions[a].value;
+        bd_wr32(record, map_at + 19 * 4, p2);
+    }
+
+    bd_wr32(record, BD_OFF_FLAG + (size_t)slot * 4, BD_FEATURE_MASK);
+    bd_wr32(record, BD_OFF_MAP + (size_t)slot * 84, BD_FEATURE_MASK);
+    char name[BD_NAME_UNITS];
+    snprintf(name, sizeof name, "Profile %d", slot + 1);
+    bd_name_set(record, slot, name);
+    bd_wr16(record, BD_OFF_SLOT, (uint16_t)slot);
+    if (mode_name != nullptr) {
+        uint32_t mode = mode_name[0] == '1' ? 1u : (mode_name[0] == '0' ? 0u : 3u);
+        bd_wr32(record, BD_OFF_MODE, mode);
+    }
+
+    const bool written = bd_hid_write_record(&link, record);
+    printf("escrita: %s\n", written ? "chunks + commit ACK" : "FALHOU");
+
+    uint8_t back[BD_REC_LEN];
+    if (written && bd_hid_read_record(&link, back, nullptr)) {
+        size_t diff = 0;
+        for (size_t i = 0; i < BD_REC_LEN; i++) {
+            if (i >= BD_OFF_CRC && i < BD_OFF_CRC + 4) continue;
+            if (back[i] != record[i]) diff++;
+        }
+        printf("releitura: %zu byte(s) divergente(s) fora do contador\n", diff);
+    }
+
+    (void)bd_hid_close_session(&link);
+    bd_hid_close(&link);
+    return written ? 0 : 1;
 }
 
 static int command_write(int argc, char **argv)
@@ -341,6 +438,7 @@ static int command_write(int argc, char **argv)
     bool verified = true;
     if (written && verify)
         verified = verify_record(&link, record);
+    (void)bd_hid_close_session(&link);
     bd_hid_close(&link);
 
     if (!written) {
@@ -376,6 +474,8 @@ int main(int argc, char **argv)
         }
         return command_dump(argv[2]);
     }
+    if (strcmp(command, "patch") == 0)
+        return command_patch(argc - 2, argv + 2);
     if (strcmp(command, "write") == 0)
         return command_write(argc - 2, argv + 2);
     if (strcmp(command, "send-a") == 0) {
@@ -393,12 +493,14 @@ int main(int argc, char **argv)
             fprintf(stderr, "não abri %s\n", devices[0].path);
             return 1;
         }
+        (void)bd_hid_open_session(&link);
         uint8_t cmd = (uint8_t)strtoul(argv[2], nullptr, 0);
         uint32_t param = (uint32_t)strtoul(argv[3], nullptr, 0);
         bool acked = bd_hid_type_a(&link, cmd, param);
         printf("send-a cmd=0x%02x param=%u -> %s\n", cmd, param,
                acked ? "ACK" : "sem ACK");
-        bd_hid_close(&link);
+        (void)bd_hid_close_session(&link);
+    bd_hid_close(&link);
         return acked ? 0 : 1;
     }
     if (strcmp(command, "info") == 0) {

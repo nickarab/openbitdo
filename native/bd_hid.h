@@ -46,6 +46,14 @@ void bd_hid_close(struct bd_hid_link *link);
                                   uint16_t length, uint8_t *out, int out_capacity,
                                   int *out_length, volatile int *progress);
 
+/* Sessão de configuração (medida no usbmon):
+ *   abre : frame cru "81 05 00 21 01" + Type A cmd 0x07 param 0
+ *   fecha: Type A cmd 0x07 param 1 + frame cru "81 05 00 51 02"
+ * O device só aplica o perfil gravado dentro da sessão; ao fechar ele volta ao
+ * modo normal (gamepad volta a ser reconhecido pelo PC). */
+[[nodiscard]] bool bd_hid_open_session(struct bd_hid_link *link);
+[[nodiscard]] bool bd_hid_close_session(struct bd_hid_link *link);
+
 /* Comando Type A (byte de comando + u32 no offset 4): 0x09 seleciona o slot,
  * 0x0A/0x0F trocam de plataforma. true = device ecoou o comando. */
 [[nodiscard]] bool bd_hid_type_a(struct bd_hid_link *link, uint8_t command,

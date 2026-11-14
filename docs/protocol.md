@@ -133,6 +133,38 @@ Mapa completo dos sub-registros: 03 §5.
 | gravação validada em `2dc8:3012` (DInput), releitura com 0 divergência fora dos campos do device | é o caso de referência |
 | dongle IDLE `0x3109`: Type C responde, Type A (`info`) não; record = 1648 × `ff` + `03 00 04 00` em `0x10` | resposta stub = controle não pareado, não falha de framing (07 §6) |
 
+## 8.1 Ativação do perfil (o que faltava)
+
+Escrita e commit ACKados **não bastam**: o firmware grava os chunks na flash e
+descarta o record na hora de aplicar se alguma seção estiver sem o magic. Medido
+comparando o record que o app oficial deixa no device (`2dc8:3012`) com o gerado
+pelo `bd_build` — a única diferença estrutural era 1 word:
+
+| offset | campo | valor exigido | sintoma se errado |
+|---|---|---|---|
+| `0x000`, `0x004`, `0x008` | feature mask ×3 | `0x20200911` | perfil não aplica |
+| `0x0E0 + slot*84` | flag do `map_key` do slot | `0x20200911` | slot não aparece no controle |
+| `0x1DC` | **flag da seção macro** | `0x20200911` | chunks+commit ACKados, record descartado |
+| `0x012` | `cur_slot` | slot alvo (`0`..`2`) | device mantém `4` (nenhum) |
+| `0x00C` | contador | qualquer | device sobrescreve (próprio contador) |
+
+Com os cinco certos o remap é aplicado no firmware e sobrevive a reboot;
+confirmado no hardware com P1→A (B0) e P2→B (B1) saindo do controle.
+
+## 8.2 Modo do gamepad e disponibilidade do HID
+
+`0x010` (mode: 0 Switch, 1 DInput, 3 XInput) decide como o controle enumera no
+próximo boot:
+
+| mode | PID | interface | HID vendor |
+|---|---|---|---|
+| 3 | `2dc8:3106` | `ff/5d/01` (xpad) | **não existe** |
+| 1 | `2dc8:3012` | HID 63 B, reports `0x02`/`0x81` | sim |
+
+Ou seja: em XInput não há canal de configuração — nem para o app oficial. Para o
+HID ficar sempre disponível sem o app do Windows, grave `--mode 1` (DInput) uma
+vez; para voltar ao XInput, `--mode 3` (ou pressionar HOME / replugar o cabo).
+
 ## 8. O que NÃO é validado
 
 | lacuna | evidência |

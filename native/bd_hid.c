@@ -162,6 +162,36 @@ bool bd_hid_read_record(struct bd_hid_link *link, uint8_t *record, volatile int 
     return true;
 }
 
+/* escreve um report de 64 B exatamente como recebido (frames de controle têm
+ * tag 0x00 e não seguem o envelope 04 — ver docs/protocol.md). */
+static bool link_send_raw(const struct bd_hid_link *link, const uint8_t frame[BD_REPORT_LEN])
+{
+    for (int attempt = 0; attempt < HID_SEND_ATTEMPTS; attempt++) {
+        ssize_t written = write(link->fd, frame, BD_REPORT_LEN);
+        if (written == (ssize_t)BD_REPORT_LEN) return true;
+        if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK) return false;
+        struct pollfd writable = {.fd = link->fd, .events = POLLOUT};
+        if (poll(&writable, 1, HID_SEND_POLL_MS) <= 0) return false;
+    }
+    return false;
+}
+
+bool bd_hid_open_session(struct bd_hid_link *link)
+{
+    uint8_t enter[BD_REPORT_LEN] = {0x81, 0x05, 0x00, 0x21, 0x01};
+    if (!link_send_raw(link, enter)) return false;
+    /* o app não espera resposta do 0x07 (confirmado no usbmon): fire-and-forget */
+    (void)bd_hid_type_a(link, 0x07, 0);
+    return true;
+}
+
+bool bd_hid_close_session(struct bd_hid_link *link)
+{
+    (void)bd_hid_type_a(link, 0x07, 1);
+    uint8_t leave[BD_REPORT_LEN] = {0x81, 0x05, 0x00, 0x51, 0x02};
+    return link_send_raw(link, leave);
+}
+
 bool bd_hid_type_a(struct bd_hid_link *link, uint8_t command, uint32_t parameter)
 {
     uint8_t payload[BD_HDR_LEN] = {0};
@@ -202,6 +232,14 @@ bool bd_hid_write_record(struct bd_hid_link *link, const uint8_t *record)
     }
 
     /* commit Type B (cmd 6 / subcmd 0x15): o device responde ecoando cmd=6 */
-    return bd_hid_execute(link, HID_COMMAND_COMMIT, HID_COMMIT_SUBCOMMAND, 0, 0,
-                          nullptr, 0, nullptr, 0, nullptr, nullptr);
+    if (!bd_hid_execute(link, HID_COMMAND_COMMIT, HID_COMMIT_SUBCOMMAND, 0, 0,
+                        nullptr, 0, nullptr, 0, nullptr, nullptr))
+        return false;
+
+    /* O app oficial, após o commit, lê 3× o bloco de 20 bytes (total=20, off=0)
+     * e só então relê o record inteiro — visto no usbmon. Replicado aqui. */
+    for (int attempt = 0; attempt < 3; attempt++)
+        (void)bd_hid_execute(link, HID_COMMAND_READ, 0, 20, 0, nullptr, 20,
+                             nullptr, 0, nullptr, nullptr);
+    return true;
 }
