@@ -22,6 +22,7 @@
 #include <gtk/gtk.h>
 
 #include "bd_hid.h"
+#include "bd_usb.h"
 
 /* ---------------------------------------------------------------- protocolo */
 
@@ -536,8 +537,34 @@ static void on_device_changed(GtkDropDown *dropdown, GParamSpec *spec [[maybe_un
     open_hid_device(&devices[selected]);
 }
 
+
+/* O controle em XInput (2dc8:3106) nao tem hidraw: manda o changeDinput_CMD pelo
+ * endpoint vendor e espera o re-enumero. Sem isso o app pediria "aperte HOME". */
+static bool g_ensuring_hid;
+static void on_reload_devices(void);
+
+static gboolean on_hid_ready(gpointer data [[maybe_unused]])
+{
+    on_reload_devices();
+    return G_SOURCE_REMOVE;
+}
+
+static gpointer ensure_hid_thread(gpointer data [[maybe_unused]])
+{
+    if (bd_usb_switch_mode(1)) {
+        for (int attempt = 0; attempt < 60; attempt++) {
+            struct bd_hid_device probe[BD_HID_MAX_DEVICES];
+            if (bd_hid_find(probe, BD_HID_MAX_DEVICES) > 0) break;
+            g_usleep(100000);
+        }
+    }
+    g_idle_add(on_hid_ready, nullptr);
+    return nullptr;
+}
+
 static void on_reload_devices(void)
 {
+
     struct bd_hid_device devices[BD_HID_MAX_DEVICES];
     int count = bd_hid_find(devices, BD_HID_MAX_DEVICES);
     if (count < 0) count = 0;
@@ -557,8 +584,13 @@ static void on_reload_devices(void)
     g_free(items);
 
     if (count > 0) {
+        g_ensuring_hid = false;
         gtk_drop_down_set_selected(GTK_DROP_DOWN(U.device_combo), 0);
         open_hid_device(&devices[0]);
+    } else if (bd_usb_has_xinput() && !g_ensuring_hid) {
+        g_ensuring_hid = true;
+        set_status("controle em modo XInput: ativando o canal de configuração...");
+        g_thread_unref(g_thread_new("ensure-hid", ensure_hid_thread, nullptr));
     } else {
         gtk_drop_down_set_selected(GTK_DROP_DOWN(U.device_combo), 0);
         bd_hid_close(&g_hid_link);

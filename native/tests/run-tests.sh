@@ -49,7 +49,7 @@ else
 fi
 
 echo "=== 2) build do app (C23, sem warnings) ==="
-if $CC $CFLAGS -o "$OUT/8bdgui" 8bdgui.c bd_core.c bd_hid.c $GTK -lm 2>"$OUT/cc2.log"; then
+if $CC $CFLAGS -o "$OUT/8bdgui" 8bdgui.c bd_core.c bd_hid.c bd_usb.c $GTK -lm 2>"$OUT/cc2.log"; then
     ok "8bdgui compila (C23 + GTK4)"
 else
     bad "8bdgui não compila" "$(grep -E 'error|warning' "$OUT/cc2.log" | head -5)"

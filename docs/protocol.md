@@ -161,9 +161,22 @@ próximo boot:
 | 3 | `2dc8:3106` | `ff/5d/01` (xpad) | **não existe** |
 | 1 | `2dc8:3012` | HID 63 B, reports `0x02`/`0x81` | sim |
 
-Ou seja: em XInput não há canal de configuração — nem para o app oficial. Para o
-HID ficar sempre disponível sem o app do Windows, grave `--mode 1` (DInput) uma
-vez; para voltar ao XInput, `--mode 3` (ou pressionar HOME / replugar o cabo).
+Ou seja: em XInput não há canal de configuração — nem para o app oficial.
+
+**Mas o modo é trocável por software.** O firmware aceita o mesmo frame de troca
+(`81 05 00 51 <m>`) no **endpoint vendor `0x02`**, o mesmo que o xpad usa para
+rumble: 32 bytes fazem o controle re-enumerar como `3012` (com hidraw) e `51 02`
+o devolve a XInput. Medido no hardware, rodando como usuário comum.
+
+| estado | caminho | comando |
+|---|---|---|
+| `3106` | usbfs: `DISCONNECT_CLAIM` + `SUBMITURB` no EP `0x02` | `bd_cli hid` (ou o app, automático) |
+| `3012` | hidraw, report `0x81` | `bd_cli mode <m>` |
+
+O knock de rumble que o app oficial usa (`HomeController.AutoDinput` →
+`Xinput.start` → `subXinput_C`, 7 passos de vibração × 3) **não** troca o modo
+neste firmware: a sequência foi reproduzida byte a byte (`00 08 00 01 00` …) e
+o controle continuou em `3106`. O caminho que funciona é o frame no EP vendor.
 
 ## 8. O que NÃO é validado
 

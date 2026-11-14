@@ -22,8 +22,10 @@ This project speaks the same vendor HID protocol directly on Linux via `hidraw`.
 - A controller exposing the **HID vendor channel**: DInput / "Ultimate Software" mode
   (`2dc8:3012`, and the `0x3100`/`0x3104`/`0x3105` software PIDs).
   In **XInput** mode (`2dc8:3106`) the device exposes a single vendor interface
-  `0xFF/0x5D/0x01` with no HID, so the profile is not reachable — same limitation as
-  the official app, which also waits for a HID-capable device.
+  `0xFF/0x5D/0x01` with no HID. The app and `bd_cli` switch it to DInput by
+  themselves: the firmware accepts the mode frame (`81 05 00 51 01`) on that vendor
+  endpoint, the same one xpad uses for rumble, and the controller re-enumerates as
+  `3012` with a live HID channel. No HOME press, no vendor driver.
 - Read/write access to `/dev/hidraw*` for your user (see `docs/udev.md`).
 
 ## Build
@@ -107,8 +109,10 @@ docs/      protocol notes, udev rule, Hyprland notes
 
 - Firmware update is not implemented.
 - Macros are read but not editable.
-- The device keeps `cur_slot = 4`; slot activation depends on the controller.
-- XInput mode is not supported for configuration (no HID channel).
+- Writing `mode = 3` (XInput) leaves the controller without HID until it is switched
+  back; use `--mode 1` to keep the configuration channel always available.
+- The rumble "knock" used by the official app could not be reproduced as a mode
+  switch and was removed; the vendor-endpoint frame replaces it.
 
 ## License
 

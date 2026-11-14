@@ -36,7 +36,7 @@ if ! $CC $CFLAGS -I native -o "$OUT/bd_build" \
     exit 0
 fi
 if ! $CC $CFLAGS -I native -o "$OUT/bd_cli" \
-        linux/bd_cli.c native/bd_hid.c native/bd_core.c 2>"$OUT/build_cli.log"; then
+        linux/bd_cli.c native/bd_hid.c native/bd_core.c native/bd_usb.c 2>"$OUT/build_cli.log"; then
     skip "bd_build/bd_cli ainda não disponível"
     exit 0
 fi
