@@ -1,0 +1,34 @@
+# Build output
+build/
+*.o
+*.d
+
+# AppImage packaging
+AppDir/
+*.AppImage
+squashfs-root/
+
+# Reverse-engineering inputs and artifacts (8BitDo proprietary software, not ours)
+app/
+assets/
+wineprefix/
+*.snapshot
+lane*.snapshot
+adv.snapshot
+
+# Local scratch
+*.bin
+*.log
+*.xwd
+*.png
+!docs/**/*.png
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Local reverse-engineering notes and Wine helper (not part of the published tree)
+re/
+run-gui.sh
