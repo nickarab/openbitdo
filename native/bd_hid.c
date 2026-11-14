@@ -104,6 +104,9 @@ bool bd_hid_execute(struct bd_hid_link *link, uint16_t command, uint16_t subcomm
                     int *out_length, volatile int *progress)
 {
     uint8_t payload[BD_HDR_LEN + BD_CHUNK_MAX];
+    /* length vai no header mesmo sem data (é o tamanho pedido num read), mas
+     * só cabe no payload até BD_CHUNK_MAX: acima disso o memcpy estouraria. */
+    if (data != nullptr && length > BD_CHUNK_MAX) return false;
     uint16_t crc = bd_pid_uses_crc(link->pid) ? bd_crc16(data, data ? length : 0) : 0;
     bd_type_c_header(command, subcommand, length, crc, total, offset, payload);
     if (data && length > 0) memcpy(payload + BD_HDR_LEN, data, length);

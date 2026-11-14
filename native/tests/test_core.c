@@ -293,6 +293,122 @@ static void test_hid(void)
     CHECK_EQ(bd_rd32(hdr, 12), 0x55667788);
 }
 
+/* ----------------------------------------------- 7. parsing da linha de comando */
+static void test_parsing(void)
+{
+    printf("[parsing]\n");
+    uint32_t v = 0xdead;
+    CHECK(bd_parse_u32("0", 3, &v) && v == 0, "0");
+    CHECK(bd_parse_u32("3", 3, &v) && v == 3, "3 no limite");
+    CHECK(bd_parse_u32("0x10", 255, &v) && v == 16, "hex");
+    CHECK(bd_parse_u32("010", 255, &v) && v == 8, "octal (base 0 do strtoul)");
+    CHECK(bd_parse_u32("4294967295", UINT32_MAX, &v) && v == UINT32_MAX, "u32 máximo");
+    v = 77;
+    CHECK(!bd_parse_u32("4", 3, &v), "acima do máximo");
+    CHECK(!bd_parse_u32("-1", UINT32_MAX, &v), "sinal negativo");
+    CHECK(!bd_parse_u32("+1", UINT32_MAX, &v), "sinal positivo");
+    CHECK(!bd_parse_u32(" 1", UINT32_MAX, &v), "espaço no início");
+    CHECK(!bd_parse_u32("1x", UINT32_MAX, &v), "lixo no fim");
+    CHECK(!bd_parse_u32("", UINT32_MAX, &v), "vazio");
+    CHECK(!bd_parse_u32("abc", UINT32_MAX, &v), "texto");
+    CHECK(!bd_parse_u32("99999999999999999999", UINT32_MAX, &v), "ERANGE");
+    CHECK(!bd_parse_u32("4294967296", UINT32_MAX, &v), "u32 + 1");
+    CHECK(!bd_parse_u32(nullptr, UINT32_MAX, &v), "nullptr");
+    CHECK_EQ(v, 77);                                        /* falha não escreve */
+
+    uint32_t a = 0xdead;
+    CHECK(bd_parse_action("none", &a) && a == 0, "none");
+    CHECK(bd_parse_action("N", &a) && a == 0, "N");
+    CHECK(bd_parse_action("-", &a) && a == 0, "-");
+    CHECK(bd_parse_action("0x2000", &a) && a == 0x2000, "número");
+    CHECK(bd_parse_action("select", &a) && a == 0x8, "alias");
+    CHECK(!bd_parse_action("NAOEXISTE", &a), "nome desconhecido");
+    CHECK(!bd_parse_action("", &a), "vazio");
+    CHECK(!bd_parse_action(nullptr, &a), "nullptr");
+}
+
+/* ------------------------------------------------- 8. patch de um slot ---- */
+static void test_patch_slot(void)
+{
+    printf("[patch de slot]\n");
+    uint8_t before[BD_REC_LEN];
+    for (size_t i = 0; i < sizeof before; i++)
+        before[i] = (uint8_t)((i * 13u + 5u) & 0xFFu);
+    bd_wr16(before, BD_OFF_SLOT, 4);                        /* sentinela do device */
+
+    uint8_t rec[BD_REC_LEN];
+    memcpy(rec, before, sizeof rec);
+    const struct bd_slot_patch patch = {
+        .set_p1 = true, .p1 = 0x2000,
+        .set_p2 = true, .p2 = 0x1000,
+        .set_mode = true, .mode = 3,
+    };
+    bd_record_patch_slot(rec, 2, &patch);
+
+    /* regressão: --mode gravava 4 bytes em 0x010 e zerava o cur_slot */
+    CHECK_EQ(bd_rd16(rec, BD_OFF_MODE), 3);
+    CHECK_EQ(bd_rd16(rec, BD_OFF_SLOT), 2);
+    const size_t map2 = BD_OFF_MAP + 2 * 84;
+    CHECK_EQ(bd_rd32(rec, map2), BD_FEATURE_MASK);
+    CHECK_EQ(bd_rd32(rec, map2 + 4 + 18 * 4), 0x2000);
+    CHECK_EQ(bd_rd32(rec, map2 + 4 + 19 * 4), 0x1000);
+    CHECK_EQ(bd_rd32(rec, BD_OFF_FLAG + 2 * 4), BD_FEATURE_MASK);
+    char name[32];
+    bd_name_get(rec, 2, name, sizeof name);
+    CHECK(strcmp(name, "Profile 3") == 0, "nome do slot 2: '%s'", name);
+
+    /* nada fora dos campos do slot 2 muda */
+    size_t outside = 0;
+    for (size_t i = 0; i < BD_REC_LEN; i++) {
+        const bool slot2 = (i >= BD_OFF_FLAG + 8 && i < BD_OFF_FLAG + 12)
+                        || (i >= BD_OFF_NAME + 64 && i < BD_OFF_NAME + 96)
+                        || (i >= map2 && i < map2 + 4)
+                        || (i >= map2 + 4 + 18 * 4 && i < map2 + 4 + 20 * 4)
+                        || (i >= BD_OFF_MODE && i < BD_OFF_SLOT + 2);
+        if (!slot2 && rec[i] != before[i]) outside++;
+    }
+    CHECK_EQ(outside, 0);
+
+    /* sem set_*: P1/P2 e modo ficam como estavam */
+    memcpy(rec, before, sizeof rec);
+    bd_record_patch_slot(rec, 0, &(const struct bd_slot_patch){});
+    CHECK_EQ(bd_rd16(rec, BD_OFF_MODE), bd_rd16(before, BD_OFF_MODE));
+    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 4 + 18 * 4), bd_rd32(before, BD_OFF_MAP + 4 + 18 * 4));
+    CHECK_EQ(bd_rd16(rec, BD_OFF_SLOT), 0);
+
+    /* slot fora da faixa não toca no record */
+    memcpy(rec, before, sizeof rec);
+    bd_record_patch_slot(rec, 3, &patch);
+    bd_record_patch_slot(rec, -1, &patch);
+    CHECK(memcmp(rec, before, sizeof rec) == 0, "slot inválido = no-op");
+}
+
+/* ----------------------------------------------- 9. comparação de records */
+static void test_record_diff(void)
+{
+    printf("[record diff]\n");
+    uint8_t a[BD_REC_LEN];
+    uint8_t b[BD_REC_LEN];
+    memset(a, 0x11, sizeof a);
+    memcpy(b, a, sizeof b);
+    size_t first = 999;
+    CHECK_EQ(bd_record_diff(a, b, &first), 0);
+    CHECK_EQ(first, 999);                                   /* sem diferença não escreve */
+
+    /* contador (0x00C..0x00F) e cur_slot (0x012..0x013) são do device */
+    for (size_t i = BD_OFF_CRC; i < BD_OFF_CRC + 4; i++) b[i] = 0xEE;
+    b[BD_OFF_SLOT] = 4;
+    b[BD_OFF_SLOT + 1] = 0xEE;
+    CHECK_EQ(bd_record_diff(a, b, &first), 0);
+
+    b[BD_OFF_MODE + 1] = 0x22;                              /* byte alto do modo conta */
+    b[BD_OFF_NAME] = 0x33;
+    b[BD_REC_LEN - 1] = 0x44;
+    CHECK_EQ(bd_record_diff(a, b, &first), 3);
+    CHECK_EQ(first, BD_OFF_MODE + 1);
+    CHECK_EQ(bd_record_diff(a, b, nullptr), 3);
+}
+
 int main(void)
 {
     printf("8bdgui — testes de núcleo\n");
@@ -302,6 +418,9 @@ int main(void)
     test_names();
     test_tables();
     test_hid();
+    test_parsing();
+    test_patch_slot();
+    test_record_diff();
     printf("\n%d checagens, %d falha(s)\n", checks, fails);
     return fails ? 1 : 0;
 }

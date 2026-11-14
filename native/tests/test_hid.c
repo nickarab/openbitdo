@@ -218,6 +218,18 @@ static void test_execute(void)
     CHECK_EQ(frames[0][1], BD_HDR_LEN + 8 + 1);
     CHECK(memcmp(frames[0] + FRAME_DATA, data, 8) == 0, "dados da escrita em +19");
 
+    /* dados acima do chunk são recusados antes de montar o frame (estourava o
+     * buffer payload[16 + 45]) */
+    uint8_t big[BD_CHUNK_MAX + 1] = {};
+    CHECK(!bd_hid_execute(&fake.link, 0x0001, 0, 0, 0, big, (uint16_t)sizeof big,
+                          nullptr, 0, nullptr, nullptr), "46 B de dados = false");
+    CHECK_EQ(fake_drain(&fake, frames, MAX_FRAMES, &wrong), 0);
+    fake_reply(&fake, 0x0001, 0, nullptr);
+    CHECK(bd_hid_execute(&fake.link, 0x0001, 0, 0, 0, big, BD_CHUNK_MAX,
+                         nullptr, 0, nullptr, nullptr), "45 B de dados passa");
+    CHECK_EQ(fake_drain(&fake, frames, MAX_FRAMES, &wrong), 1);
+    CHECK_EQ(frames[0][1], BD_HDR_LEN + BD_CHUNK_MAX + 1);
+
     fake_close(&fake);
 
     /* PIDs da tabela de CRC levam o CRC dos dados no header */

@@ -15,8 +15,7 @@
 static constexpr uint16_t READ_COMMAND = 0x0002;
 static constexpr uint16_t WRITE_COMMAND = 0x0001;
 static constexpr uint32_t STATE_LENGTH = 0x14; /* bloco lido por getUltimate_*CurrentSlot */
-static constexpr size_t DEVICE_CRC_BYTES = 4;
-static constexpr size_t DEVICE_SLOT_BYTES = 2;
+static constexpr uint32_t MODE_FIELD_MAX = 3;  /* gamepad_mode do record: 0..3 */
 
 static void print_usage(FILE *stream, const char *program)
 {
@@ -25,7 +24,7 @@ static void print_usage(FILE *stream, const char *program)
             "     %s dump <arquivo>\n"
             "     %s write <arquivo> [--verify] [--dry-run] [--no-commit]\n"
             "            [--first-chunk] [--pid N] [--device CAMINHO]\n"
-            "     %s patch <slot> [--p1 NOME] [--p2 NOME] [--mode 0|1|3]\n"
+            "     %s patch <slot> [--p1 ACAO] [--p2 ACAO] [--mode 0..3]\n"
             "     %s hid                       ativa o HID (XInput -> DInput)\n"
             "     %s mode <1|2|3|4>            changeDinput_CMD (1 DInput, 2 XInput)\n"
             "     %s info\n",
@@ -34,11 +33,8 @@ static void print_usage(FILE *stream, const char *program)
 
 [[nodiscard]] static bool parse_pid(const char *text, uint16_t *pid)
 {
-    if (text[0] == '-')
-        return false;
-    char *end = nullptr;
-    unsigned long value = strtoul(text, &end, 0);
-    if (end == text || *end != '\0' || value > UINT16_MAX)
+    uint32_t value = 0;
+    if (!bd_parse_u32(text, UINT16_MAX, &value))
         return false;
     *pid = (uint16_t)value;
     return true;
@@ -233,12 +229,6 @@ static int command_info(void)
     return true;
 }
 
-[[nodiscard]] static bool is_device_managed(size_t offset)
-{
-    return (offset >= (size_t)BD_OFF_CRC && offset < (size_t)BD_OFF_CRC + DEVICE_CRC_BYTES) ||
-           (offset >= (size_t)BD_OFF_SLOT && offset < (size_t)BD_OFF_SLOT + DEVICE_SLOT_BYTES);
-}
-
 /* crc_value (0x00C) é contador do device e cur_slot (0x012) fica em 4:
  * comparar esses dois campos com o arquivo acusaria diferença sempre. */
 [[nodiscard]] static bool verify_record(struct bd_hid_link *link, const uint8_t *expected)
@@ -249,15 +239,8 @@ static int command_info(void)
         return false;
     }
 
-    size_t differences = 0;
     size_t first = 0;
-    for (size_t index = 0; index < (size_t)BD_REC_LEN; ++index) {
-        if (is_device_managed(index) || expected[index] == actual[index])
-            continue;
-        if (differences == 0)
-            first = index;
-        ++differences;
-    }
+    const size_t differences = bd_record_diff(expected, actual, &first);
     if (differences > 0) {
         fprintf(stderr, "verify: %zu byte(s) fora dos campos do device; primeiro em 0x%03zx\n",
                 differences, first);
@@ -290,20 +273,37 @@ static bool ensure_hid(struct bd_hid_device *devices)
  * sessão, como o app oficial faz. Preserva os outros perfis. */
 static int command_patch(int argc, char **argv)
 {
-    if (argc < 1) return 2;
-    const int slot = atoi(argv[0]);
-    if (slot < 0 || slot >= BD_SLOTS) {
-        fprintf(stderr, "slot inválido: %s (0..%d)\n", argv[0], BD_SLOTS - 1);
+    uint32_t slot = 0;
+    if (argc < 1 || !bd_parse_u32(argv[0], BD_SLOTS - 1, &slot)) {
+        fprintf(stderr, "slot inválido: %s (0..%d)\n", argc < 1 ? "(nenhum)" : argv[0],
+                BD_SLOTS - 1);
         return 2;
     }
-    const char *p1_name = nullptr;
-    const char *p2_name = nullptr;
-    const char *mode_name = nullptr;
-    for (int i = 1; i + 1 < argc; i += 2) {
-        if (strcmp(argv[i], "--p1") == 0) p1_name = argv[i + 1];
-        else if (strcmp(argv[i], "--p2") == 0) p2_name = argv[i + 1];
-        else if (strcmp(argv[i], "--mode") == 0) mode_name = argv[i + 1];
-        else { fprintf(stderr, "opção desconhecida: %s\n", argv[i]); return 2; }
+    struct bd_slot_patch patch = {};
+    for (int i = 1; i < argc; i += 2) {
+        const char *const option = argv[i];
+        if (i + 1 >= argc) {
+            fprintf(stderr, "falta valor para %s\n", option);
+            return 2;
+        }
+        const char *const text = argv[i + 1];
+        bool valid = false;
+        if (strcmp(option, "--p1") == 0) {
+            valid = patch.set_p1 = bd_parse_action(text, &patch.p1);
+        } else if (strcmp(option, "--p2") == 0) {
+            valid = patch.set_p2 = bd_parse_action(text, &patch.p2);
+        } else if (strcmp(option, "--mode") == 0) {
+            uint32_t mode = 0;
+            valid = patch.set_mode = bd_parse_u32(text, MODE_FIELD_MAX, &mode);
+            patch.mode = (uint16_t)mode;
+        } else {
+            fprintf(stderr, "opção desconhecida: %s\n", option);
+            return 2;
+        }
+        if (!valid) {
+            fprintf(stderr, "valor inválido para %s: %s\n", option, text);
+            return 2;
+        }
     }
 
     struct bd_hid_device devices[BD_HID_MAX_DEVICES];
@@ -325,65 +325,25 @@ static int command_patch(int argc, char **argv)
         return 1;
     }
 
+    int status = 1;
     uint8_t record[BD_REC_LEN];
     if (!bd_hid_read_record(&link, record, nullptr)) {
         fprintf(stderr, "leitura do record falhou\n");
-        (void)bd_hid_close_session(&link);
-        bd_hid_close(&link);
-        return 1;
-    }
+    } else {
+        bd_record_patch_slot(record, (int)slot, &patch);
+        const bool written = bd_hid_write_record(&link, record);
+        printf("escrita: %s\n", written ? "chunks + commit ACK" : "FALHOU");
 
-    const size_t map_at = BD_OFF_MAP + (size_t)slot * 84 + 4;
-    uint32_t p1 = 0;
-    uint32_t p2 = 0;
-    if (p1_name != nullptr) {
-        p1 = bd_action_value(p1_name);
-        if (p1 == 0 && strcasecmp(p1_name, "none") != 0 && strcmp(p1_name, "-") != 0) {
-            fprintf(stderr, "acao desconhecida: %s\n", p1_name);
-            (void)bd_hid_close_session(&link);
-            bd_hid_close(&link);
-            return 2;
-        }
-        bd_wr32(record, map_at + 18 * 4, p1);
-    }
-    if (p2_name != nullptr) {
-        p2 = bd_action_value(p2_name);
-        if (p2 == 0 && strcasecmp(p2_name, "none") != 0 && strcmp(p2_name, "-") != 0) {
-            fprintf(stderr, "acao desconhecida: %s\n", p2_name);
-            (void)bd_hid_close_session(&link);
-            bd_hid_close(&link);
-            return 2;
-        }
-        bd_wr32(record, map_at + 19 * 4, p2);
-    }
-
-    bd_wr32(record, BD_OFF_FLAG + (size_t)slot * 4, BD_FEATURE_MASK);
-    bd_wr32(record, BD_OFF_MAP + (size_t)slot * 84, BD_FEATURE_MASK);
-    char name[BD_NAME_UNITS];
-    snprintf(name, sizeof name, "Profile %d", slot + 1);
-    bd_name_set(record, slot, name);
-    bd_wr16(record, BD_OFF_SLOT, (uint16_t)slot);
-    if (mode_name != nullptr) {
-        uint32_t mode = mode_name[0] == '1' ? 1u : (mode_name[0] == '0' ? 0u : 3u);
-        bd_wr32(record, BD_OFF_MODE, mode);
-    }
-
-    const bool written = bd_hid_write_record(&link, record);
-    printf("escrita: %s\n", written ? "chunks + commit ACK" : "FALHOU");
-
-    uint8_t back[BD_REC_LEN];
-    if (written && bd_hid_read_record(&link, back, nullptr)) {
-        size_t diff = 0;
-        for (size_t i = 0; i < BD_REC_LEN; i++) {
-            if (i >= BD_OFF_CRC && i < BD_OFF_CRC + 4) continue;
-            if (back[i] != record[i]) diff++;
-        }
-        printf("releitura: %zu byte(s) divergente(s) fora do contador\n", diff);
+        uint8_t back[BD_REC_LEN];
+        if (written && bd_hid_read_record(&link, back, nullptr))
+            printf("releitura: %zu byte(s) divergente(s) fora dos campos do device\n",
+                   bd_record_diff(record, back, nullptr));
+        status = written ? 0 : 1;
     }
 
     (void)bd_hid_close_session(&link);
     bd_hid_close(&link);
-    return written ? 0 : 1;
+    return status;
 }
 
 static int command_write(int argc, char **argv)
@@ -509,8 +469,11 @@ int main(int argc, char **argv)
     if (strcmp(command, "write") == 0)
         return command_write(argc - 2, argv + 2);
     if (strcmp(command, "send-a") == 0) {
-        if (argc != 4) {
-            fprintf(stderr, "uso: %s send-a <comando> <parametro>\n", argv[0]);
+        uint32_t cmd = 0;
+        uint32_t param = 0;
+        if (argc != 4 || !bd_parse_u32(argv[2], UINT8_MAX, &cmd) ||
+            !bd_parse_u32(argv[3], UINT32_MAX, &param)) {
+            fprintf(stderr, "uso: %s send-a <comando 0..255> <parametro u32>\n", argv[0]);
             return 2;
         }
         struct bd_hid_device devices[BD_HID_MAX_DEVICES];
@@ -524,13 +487,11 @@ int main(int argc, char **argv)
             return 1;
         }
         (void)bd_hid_open_session(&link);
-        uint8_t cmd = (uint8_t)strtoul(argv[2], nullptr, 0);
-        uint32_t param = (uint32_t)strtoul(argv[3], nullptr, 0);
-        bool acked = bd_hid_type_a(&link, cmd, param);
-        printf("send-a cmd=0x%02x param=%u -> %s\n", cmd, param,
+        const bool acked = bd_hid_type_a(&link, (uint8_t)cmd, param);
+        printf("send-a cmd=0x%02x param=%u -> %s\n", (unsigned)cmd, (unsigned)param,
                acked ? "ACK" : "sem ACK");
         (void)bd_hid_close_session(&link);
-    bd_hid_close(&link);
+        bd_hid_close(&link);
         return acked ? 0 : 1;
     }
     if (strcmp(command, "hid") == 0) {
@@ -564,8 +525,8 @@ int main(int argc, char **argv)
             fprintf(stderr, "uso: %s mode <1=DInput 2=XInput 3=DS4 4=Switch>\n", argv[0]);
             return 2;
         }
-        const unsigned long mode = strtoul(argv[2], nullptr, 10);
-        if (mode < 1 || mode > 4) {
+        uint32_t mode = 0;
+        if (!bd_parse_u32(argv[2], 4, &mode) || mode < 1) {
             fprintf(stderr, "modo invalido: %s\n", argv[2]);
             return 2;
         }
@@ -575,13 +536,13 @@ int main(int argc, char **argv)
                 fprintf(stderr, "sem HID e sem 2dc8:3106 para trocar de modo\n");
                 return 1;
             }
-            printf("changeDinput_CMD mode=%lu -> enviado no endpoint vendor\n", mode);
+            printf("changeDinput_CMD mode=%u -> enviado no endpoint vendor\n", (unsigned)mode);
             return 0;
         }
         struct bd_hid_link link = {.fd = -1, .pid = devices[0].pid};
         if (!bd_hid_open(&link, devices[0].path, devices[0].pid)) return 1;
         const bool sent = bd_hid_mode_switch(&link, (uint8_t)mode);
-        printf("changeDinput_CMD mode=%lu -> %s\n", mode, sent ? "enviado" : "falhou");
+        printf("changeDinput_CMD mode=%u -> %s\n", (unsigned)mode, sent ? "enviado" : "falhou");
         bd_hid_close(&link);
         return sent ? 0 : 1;
     }

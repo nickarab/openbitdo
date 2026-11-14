@@ -197,6 +197,27 @@ else
     bad "bd_cli mode 9 não foi rejeitado com exit 2"
 fi
 
+# Argumentos inválidos são recusados antes de procurar o device (exit 2).
+cli_rejects() {
+    "$BD_CLI" "$@" >/dev/null 2>&1
+    if [ $? -eq 2 ]; then
+        ok "bd_cli rejeita: $*"
+    else
+        bad "bd_cli aceitou: $*"
+    fi
+}
+cli_rejects patch abc
+cli_rejects patch 3
+cli_rejects patch -1
+cli_rejects patch 0 --mode 9
+cli_rejects patch 0 --mode x
+cli_rejects patch 0 --p1 NAOEXISTE
+cli_rejects patch 0 --p1
+cli_rejects patch 0 --opcao 1
+cli_rejects send-a 256 0
+cli_rejects send-a 0x09 abc
+cli_rejects mode 1x
+
 if "$BD_CLI" write "$OUT/default.bin" --dry-run >"$OUT/dry.out" 2>&1 &&
    grep -q 'dry-run' "$OUT/dry.out"; then
     ok "bd_cli write --dry-run lê o arquivo sem enviar nada"

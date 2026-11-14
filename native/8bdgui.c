@@ -442,11 +442,11 @@ static gboolean on_io_done(gpointer data)
 
     record_loaded = true;
     refresh_ui();
-    set_status("sincronizado: slot %u · modo %s · crc 0x%04x · %d bytes",
+    set_status("sincronizado: slot %u · modo %s · contador %u · %d bytes",
                bd_rd16(record, BD_OFF_SLOT),
                bd_rd16(record, BD_OFF_MODE) <= 3
                    ? bd_mode_names[bd_rd16(record, BD_OFF_MODE)] : "?",
-               bd_rd16(record, BD_OFF_CRC), BD_REC_LEN);
+               bd_rd32(record, BD_OFF_CRC), BD_REC_LEN);
     return G_SOURCE_REMOVE;
 }
 
@@ -1151,12 +1151,7 @@ static int write_selftest(const char *path)
         uint8_t back[BD_REC_LEN];
         memset(back, 0, sizeof back);
         if (bd_hid_read_record(&link, back, nullptr)) {
-            size_t differences = 0;
-            for (int i = 0; i < BD_REC_LEN; i++) {
-                if (i >= BD_OFF_CRC && i < BD_OFF_CRC + 4) continue;   /* contador do device */
-                if (i == BD_OFF_SLOT) continue;                        /* sentinela do device */
-                if (back[i] != wanted[i]) differences++;
-            }
+            const size_t differences = bd_record_diff(wanted, back, nullptr);
             printf("releitura: %zu byte(s) divergente(s) fora dos campos do device\n", differences);
             status = differences == 0 ? 0 : 1;
         } else {
@@ -1191,8 +1186,8 @@ static int selftest(void)
     }
 
     printf("record: %d bytes\n", BD_REC_LEN);
-    printf("  mode=%u slot=%u crc=0x%04x\n", bd_rd16(record, BD_OFF_MODE),
-           bd_rd16(record, BD_OFF_SLOT), bd_rd16(record, BD_OFF_CRC));
+    printf("  mode=%u slot=%u contador=0x%08x\n", bd_rd16(record, BD_OFF_MODE),
+           bd_rd16(record, BD_OFF_SLOT), bd_rd32(record, BD_OFF_CRC));
     for (int slot = 0; slot < BD_SLOTS; slot++) {
         char *name = profile_name_dup(record, slot);
         printf("  slot %d: nome='%s'\n", slot, name);

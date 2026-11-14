@@ -23,11 +23,6 @@ static constexpr size_t FEATURE_SLOT_SIZE = 8;            /* flag + featrue */
 static constexpr size_t MAP_SLOT_SIZE = 4 + BD_NKEYS * 4; /* flag + key[20] */
 static constexpr size_t MODE_COUNT = sizeof bd_mode_names / sizeof bd_mode_names[0];
 
-/*
- * key[] na ordem MAP_KEY_E, cada tecla mapeada para a própria ação.
- * STAR (12) usa KEY_MENU_MAP 0x10000 e HOME (13) usa 0x8000
- * (09-native-gui.md); P1/P2 (18/19) não emitem nada por padrão.
- */
 /* Mapa identidade: cada entrada física emite a si mesma (ordem MAP_KEY_E + P1/P2).
  * Valores copiados do record que o app oficial grava — conferidos no hardware. */
 static const uint32_t identity_map[BD_NKEYS] = {
@@ -53,13 +48,12 @@ static const uint32_t identity_map[BD_NKEYS] = {
     0x0,      /* P2 — sem ação por padrão */
 };
 
-static void set_full_range(uint8_t *record, size_t base, size_t enabled_slot, bool patch_only)
+static void set_full_range(uint8_t *record, size_t base, size_t edited_slot, bool patch_only)
 {
     for (size_t slot = 0; slot < BD_SLOTS; ++slot) {
-        if (patch_only && slot != enabled_slot) continue;
+        if (patch_only && slot != edited_slot) continue;
         const size_t at = base + slot * RANGE_SLOT_SIZE;
         bd_wr32(record, at, CONFIG_ENABLED);
-        (void)enabled_slot;
         /* range[0] = eixo esquerdo, range[1] = direito; cada par é início/fim */
         record[at + 4] = RANGE_MIN;
         record[at + 5] = RANGE_MAX;
@@ -68,41 +62,16 @@ static void set_full_range(uint8_t *record, size_t base, size_t enabled_slot, bo
     }
 }
 
-static bool parse_number(const char *text, unsigned long *out)
-{
-    char *end = nullptr;
-    const unsigned long value = strtoul(text, &end, 0);
-    if (end == text || *end != '\0' || value > UINT32_MAX)
-        return false;
-    *out = value;
-    return true;
-}
-
-static bool parse_action(const char *text, uint32_t *out)
-{
-    if (strcasecmp(text, "none") == 0 || strcasecmp(text, "n") == 0) {
-        *out = 0;
-        return true;
-    }
-    unsigned long numeric = 0;
-    if (parse_number(text, &numeric)) {
-        *out = (uint32_t)numeric;
-        return true;
-    }
-    const uint32_t value = bd_action_value(text);
-    if (value == 0) return false;
-    *out = value;
-    return true;
-}
-
 static int usage(const char *program)
 {
     fprintf(stderr,
-            "uso: %s <saida.bin> [--mode N] [--slot N] [--p1 ACAO] [--p2 ACAO]\n"
+            "uso: %s <saida.bin> [--from BASE.bin] [--mode N] [--slot N]\n"
+            "          [--p1 ACAO] [--p2 ACAO]\n"
+            "  --from: parte de um record de 1652 B e altera só o slot indicado\n"
             "  modo: 0..3 (0=Switch, 1=DInput, 3=XInput) | slot: 0..%d\n"
             "  ACAO: nome (A,B,X,Y,L1,R1,L2,R2,L3,R3,SELECT,START,HOME,MENU,\n"
             "  UP,DOWN,LEFT,RIGHT,SCREENSHOT,TURBO_SINGLE,TURBO_AUTO,P1,P2,SWAP,\n"
-            "  BT_CON) ou valor hex (0x2000)\n",
+            "  BT_CON), none, ou valor numérico (0x2000)\n",
             program, BD_SLOTS - 1);
     return 2;
 }
@@ -120,8 +89,8 @@ int main(int argc, char **argv)
 
     const char *const output = argv[1];
     const char *from_path = nullptr;   /* base para patch de um slot só */
-    unsigned long mode = 1; /* DInput */
-    unsigned long slot = 0;
+    uint32_t mode = 1; /* DInput */
+    uint32_t slot = 0;
     uint32_t p1 = 0;
     uint32_t p2 = 0;
 
@@ -134,18 +103,18 @@ int main(int argc, char **argv)
         const char *const text = argv[i + 1];
 
         if (strcmp(option, "--mode") == 0) {
-            if (!parse_number(text, &mode) || mode >= MODE_COUNT)
+            if (!bd_parse_u32(text, MODE_COUNT - 1, &mode))
                 return invalid_value(option, text);
         } else if (strcmp(option, "--from") == 0) {
             from_path = text;
         } else if (strcmp(option, "--slot") == 0) {
-            if (!parse_number(text, &slot) || slot >= BD_SLOTS)
+            if (!bd_parse_u32(text, BD_SLOTS - 1, &slot))
                 return invalid_value(option, text);
         } else if (strcmp(option, "--p1") == 0) {
-            if (!parse_action(text, &p1))
+            if (!bd_parse_action(text, &p1))
                 return invalid_value(option, text);
         } else if (strcmp(option, "--p2") == 0) {
-            if (!parse_action(text, &p2))
+            if (!bd_parse_action(text, &p2))
                 return invalid_value(option, text);
         } else {
             fprintf(stderr, "opção desconhecida: %s\n", option);
@@ -181,15 +150,16 @@ int main(int argc, char **argv)
         if (patch_only && s != (size_t)slot) continue;
         bd_wr32(record, BD_OFF_FLAG + s * 4, BD_FEATURE_MASK);
         bd_wr32(record, BD_OFF_RUM + s * RUMBLE_SLOT_SIZE, CONFIG_ENABLED);
-        /* o firmware descarta o record se a seção macro não tiver o magic
-     * (medido: record do app tem 0x20200911 em 0x1DC; o meu tinha 0) */
-    bd_wr32(record, BD_OFF_MAC, BD_FEATURE_MASK);
-    bd_wr32(record, BD_OFF_FEAT + s * FEATURE_SLOT_SIZE, CONFIG_ENABLED);
+        bd_wr32(record, BD_OFF_FEAT + s * FEATURE_SLOT_SIZE, CONFIG_ENABLED);
 
         char name[BD_NAME_UNITS];
         snprintf(name, sizeof name, "Profile %zu", s + 1);
         bd_name_set(record, (int)s, name);
     }
+
+    /* O firmware descarta o record inteiro se a seção macro não tiver o magic
+     * (medido: o record do app oficial tem 0x20200911 em 0x1DC). */
+    bd_wr32(record, BD_OFF_MAC, BD_FEATURE_MASK);
 
     set_full_range(record, BD_OFF_JOY, (size_t)slot, patch_only);
     set_full_range(record, BD_OFF_TRG, (size_t)slot, patch_only);
@@ -219,7 +189,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("gerado %s: %zu bytes | modo=%s slot=%lu | P1=0x%x P2=0x%x\n",
-           output, sizeof record, bd_mode_names[mode], slot, p1, p2);
+    printf("gerado %s: %zu bytes | modo=%s slot=%u | P1=0x%x P2=0x%x\n",
+           output, sizeof record, bd_mode_names[mode], (unsigned)slot, p1, p2);
     return 0;
 }

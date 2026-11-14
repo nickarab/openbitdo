@@ -1,5 +1,8 @@
 #include "bd_core.h"
 
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -435,6 +438,80 @@ int bd_action_index(uint32_t value)
             return (int)index;
     }
     return BD_ACTION_NONE;
+}
+
+bool bd_parse_u32(const char *text, uint32_t max, uint32_t *out)
+{
+    if (text == nullptr || text[0] < '0' || text[0] > '9')
+        return false;
+    char *end = nullptr;
+    errno = 0;
+    const unsigned long value = strtoul(text, &end, 0);
+    if (errno != 0 || end == text || *end != '\0' || value > max)
+        return false;
+    *out = (uint32_t)value;
+    return true;
+}
+
+bool bd_parse_action(const char *text, uint32_t *out)
+{
+    if (text == nullptr)
+        return false;
+    if (strcasecmp(text, "none") == 0 || strcasecmp(text, "n") == 0 || strcmp(text, "-") == 0) {
+        *out = 0;
+        return true;
+    }
+    if (bd_parse_u32(text, UINT32_MAX, out))
+        return true;
+    const uint32_t value = bd_action_value(text);
+    if (value == 0)
+        return false;
+    *out = value;
+    return true;
+}
+
+void bd_record_patch_slot(uint8_t record[static BD_REC_LEN], int slot,
+                          const struct bd_slot_patch *patch)
+{
+    if (slot < 0 || slot >= BD_SLOTS)
+        return;
+    const size_t map_slot = BD_OFF_MAP + (size_t)slot * RECORD_MAP_KEY_SLOT_BYTES;
+    if (patch->set_p1)
+        bd_wr32(record, map_slot + 4 + (BD_NKEYS - 2) * 4, patch->p1);
+    if (patch->set_p2)
+        bd_wr32(record, map_slot + 4 + (BD_NKEYS - 1) * 4, patch->p2);
+
+    bd_wr32(record, BD_OFF_FLAG + (size_t)slot * RECORD_FLAG_BYTES, BD_FEATURE_MASK);
+    bd_wr32(record, map_slot, BD_FEATURE_MASK);
+
+    char name[BD_NAME_UNITS];
+    snprintf(name, sizeof name, "Profile %d", slot + 1);
+    bd_name_set(record, slot, name);
+
+    bd_wr16(record, BD_OFF_SLOT, (uint16_t)slot);
+    /* gamepad_mode é u16: escrever 4 bytes apagaria o cur_slot logo ao lado. */
+    if (patch->set_mode)
+        bd_wr16(record, BD_OFF_MODE, patch->mode);
+}
+
+static bool is_device_managed(size_t offset)
+{
+    return (offset >= BD_OFF_CRC && offset < BD_OFF_CRC + RECORD_CRC_BYTES)
+        || (offset >= BD_OFF_SLOT && offset < BD_OFF_SLOT + RECORD_SLOT_BYTES);
+}
+
+size_t bd_record_diff(const uint8_t expected[static BD_REC_LEN],
+                      const uint8_t actual[static BD_REC_LEN], size_t *first)
+{
+    size_t differences = 0;
+    for (size_t offset = 0; offset < BD_REC_LEN; ++offset) {
+        if (is_device_managed(offset) || expected[offset] == actual[offset])
+            continue;
+        if (differences == 0 && first != nullptr)
+            *first = offset;
+        ++differences;
+    }
+    return differences;
 }
 
 static constexpr size_t HID_FRAME_OFF_REPORT_ID = 0;

@@ -43,6 +43,9 @@ em `bd_core.c` e no topo do teste: mudar uma constante quebra o build.
 | nomes UTF-16LE | acentos, corte em 15 code units, fora do BMP descartado sem sair dos 32 B do slot |
 | tabelas | ações, `bd_key_short`/`bd_key_long`, `bd_action_value` (caixa, aliases, desconhecido), ida e volta nome → valor → índice |
 | framing HID | frame `81 len+1 04`, limite de 61 B, parse de `02 04`, header Tipo C |
+| parsing | `bd_parse_u32` (faixa, hex/octal, sinal, espaço, lixo, ERANGE; falha não escreve) e `bd_parse_action` (`none`/`n`/`-`, número, alias) |
+| patch de slot | `bd_record_patch_slot`: `--mode` grava u16 sem apagar o `cur_slot` (regressão), P1/P2, flags, nome, nada fora do slot muda, slot inválido = no-op |
+| record diff | `bd_record_diff` ignora contador `0x00C..0x00F` e `cur_slot` `0x012..0x013`, conta o resto, `first` |
 
 ## `test_hid` (`native/tests/test_hid.c`)
 
@@ -54,7 +57,7 @@ enfileira as respostas antes e confere depois os frames que o host mandou.
 |---|---|
 | frames crus | `81 05 00 51 <m>` com o modo no byte 4 e zeros até 64 B; sessão (`81 05 00 21 01` + `0x07`/0, `0x07`/1 + `81 05 00 51 02`) |
 | Type A | cmd em +0, param u32 LE em +4, sem resposta → `false` |
-| Type C | ignora eco de outro cmd, copia de +18 limitado ao report e ao buffer, progress, CRC no header só nos PIDs da tabela, device mudo → `false` |
+| Type C | ignora eco de outro cmd, copia de +18 limitado ao report e ao buffer, progress, CRC no header só nos PIDs da tabela, device mudo → `false`, dados acima de 45 B recusados sem enviar |
 | read_record | 37 pedidos com offset/len certos, record igual ao do device, desiste após 2 tentativas no primeiro chunk |
 | write_record | 37 chunks com os dados certos, commit `6`/`0x15`, 3 releituras de 20 B, commit sem eco → `false` |
 
@@ -63,8 +66,11 @@ leva ~4 s.
 
 **Mutações verificadas** (cópia do repositório em `mktemp -d`): subcomando do
 commit, offset do parâmetro do Type A, modo ignorado no `mode_switch`, eco de
-outro cmd aceito, fast-fail 2 → 3, releituras 3 → 2, chunk 45 → 44 e CRC
-ausente no `0x3109` — todas derrubam pelo menos uma checagem.
+outro cmd aceito, fast-fail 2 → 3, releituras 3 → 2, chunk 45 → 44, CRC
+ausente no `0x3109`, guarda de tamanho removida do `execute`; no core, modo
+gravado como u32 no patch, diff ignorando só 1 byte do `cur_slot`, parse
+aceitando sinal/espaço e patch sem limite de slot — todas derrubam pelo menos
+uma checagem.
 
 ## `test_tools.sh`
 
@@ -76,15 +82,16 @@ compila com o Makefile num diretório temporário. Build quebrado é FAIL.
   mexe só no slot 2; `--from` preserva os slots não editados; rejeita ação
   inexistente, `--mode 4`, `--slot 3`, número inválido, opção sem valor ou
   desconhecida e `--from` ausente.
-- `bd_cli`: sem argumentos → uso e exit 2; subcomando desconhecido e `mode 9`
-  → exit 2; `write --dry-run` lê o arquivo sem enviar nada e rejeita record com
+- `bd_cli`: sem argumentos → uso e exit 2; subcomando desconhecido, `mode 9`,
+  `patch` com slot/modo/ação inválidos ou opção sem valor e `send-a` com
+  números inválidos → exit 2 antes de procurar o device; `write --dry-run` lê o arquivo sem enviar nada e rejeita record com
   tamanho errado; `list` não trava (limite de 5 s).
 
 ## Não coberto
 
 - `bd_usb.c` (troca de modo pelo endpoint vendor do `3106`) só roda com o
   controle: usbfs não tem dublê simples.
-- `bd_cli patch` lê e grava no device; a lógica de patch ainda não é uma
-  função pura testável (fase 2).
+- `bd_cli patch` fora da validação de argumentos: o I/O com o device só roda
+  com hardware (a edição em si é `bd_record_patch_slot`, coberta no `test_core`).
 - A semântica da sessão (`81 05 00 21 01` / `81 05 00 51 02`) está congelada
   como é hoje; mudar exige validar no hardware.

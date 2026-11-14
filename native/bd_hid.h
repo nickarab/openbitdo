@@ -40,7 +40,8 @@ void bd_hid_close(struct bd_hid_link *link);
 
 /* Envia um comando Type C e espera o eco do mesmo cmd. data nullptr manda só o header
  * (o read leva o tamanho no campo len). out, out_length e progress são opcionais;
- * progress recebe o offset concluído. false = envio falhou ou o device não ecoou. */
+ * progress recebe o offset concluído. false = data com mais de BD_CHUNK_MAX bytes,
+ * envio falhou ou o device não ecoou. */
 [[nodiscard]] bool bd_hid_execute(struct bd_hid_link *link, uint16_t command, uint16_t subcommand,
                                   uint32_t total, uint32_t offset, const uint8_t *data,
                                   uint16_t length, uint8_t *out, int out_capacity,

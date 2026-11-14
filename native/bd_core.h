@@ -76,6 +76,35 @@ extern const char *const bd_key_long[BD_NKEYS];
 extern const char *const bd_mode_names[4];
 [[nodiscard]] int bd_action_index(uint32_t value);
 
+/* Inteiro sem sinal estrito (base 0: 10, 0x16, 0 octal): exige dígito no
+ * início (strtoul aceitaria espaço e '-'), nada sobrando e valor <= max. */
+[[nodiscard]] bool bd_parse_u32(const char *text, uint32_t max, uint32_t *out);
+
+/* Valor de key[] na linha de comando: "none"/"n"/"-" = 0, número (0x2000)
+ * ou nome/alias de bd_action_value. false = não reconhecido. */
+[[nodiscard]] bool bd_parse_action(const char *text, uint32_t *out);
+
+/* Edição de um slot de um record lido do device (o que `bd_cli patch` faz):
+ * habilita o slot (flag e flag do mapa), renomeia para "Profile N", grava
+ * cur_slot e, se pedidos, P1/P2 (key[18]/key[19]) e gamepad_mode (u16). */
+struct bd_slot_patch {
+    bool set_p1;
+    bool set_p2;
+    bool set_mode;
+    uint32_t p1;
+    uint32_t p2;
+    uint16_t mode;
+};
+void bd_record_patch_slot(uint8_t record[static BD_REC_LEN], int slot,
+                          const struct bd_slot_patch *patch);
+
+/* Bytes diferentes entre dois records, ignorando os campos que o device
+ * reescreve: crc_value (0x00C, contador) e cur_slot (0x012, fica em 4).
+ * first recebe o primeiro offset divergente (se houver e first != nullptr). */
+[[nodiscard]] size_t bd_record_diff(const uint8_t expected[static BD_REC_LEN],
+                                    const uint8_t actual[static BD_REC_LEN],
+                                    size_t *first);
+
 /* Tamanho do chunk de read/write que começa em offset: BD_CHUNK_MAX até o fim
  * do record (1652 = 36 × 45 + 32); 0 quando offset >= BD_REC_LEN. */
 [[nodiscard]] uint16_t bd_chunk_len(uint32_t offset);
