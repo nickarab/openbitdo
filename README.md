@@ -6,7 +6,7 @@ GTK4 interface, written in C23. No Wine, no emulation layer.
 The official 8BitDo software is Windows-only and requires Windows HID APIs.
 This project speaks the same vendor HID protocol directly on Linux via `hidraw`.
 
-![tabs](<img width="2541" height="1312" alt="image" src="https://github.com/user-attachments/assets/1613e9ca-8e74-4565-8c66-bccafa962c3f" />)
+<img width="2541" height="1312" alt="image" src="https://github.com/user-attachments/assets/1613e9ca-8e74-4565-8c66-bccafa962c3f" />
 
 ## Features
 
