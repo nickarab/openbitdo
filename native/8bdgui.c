@@ -943,6 +943,10 @@ static GtkWidget *build_top_bar(void)
                      G_CALLBACK(on_profile_changed), nullptr);
     gtk_box_append(GTK_BOX(top), U.profile_dropdown);
 
+    GtkWidget *write_label = gtk_label_new("Permitir gravar");
+    gtk_widget_add_css_class(write_label, "dim-label");
+    gtk_box_append(GTK_BOX(top), write_label);
+
     U.write_permission_switch = gtk_switch_new();
     gtk_widget_set_tooltip_text(U.write_permission_switch,
                                 "Permitir gravar no controle (Sync to device)");

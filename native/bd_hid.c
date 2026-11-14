@@ -162,6 +162,24 @@ bool bd_hid_read_record(struct bd_hid_link *link, uint8_t *record, volatile int 
     return true;
 }
 
+bool bd_hid_type_a(struct bd_hid_link *link, uint8_t command, uint32_t parameter)
+{
+    uint8_t payload[BD_HDR_LEN] = {0};
+    payload[0] = command;
+    memcpy(payload + 4, &parameter, sizeof parameter);
+
+    if (!link_send(link, payload, sizeof payload)) return false;
+
+    for (int attempt = 0; attempt < HID_REPLY_ATTEMPTS; attempt++) {
+        uint8_t response[BD_REPORT_LEN];
+        if (!link_recv(link, response, HID_REPLY_TIMEOUT_MS)) continue;
+        uint32_t echoed = 0;
+        memcpy(&echoed, response + 6, sizeof echoed);
+        if (response[2] == BD_TAG_ADVANCE && echoed == command) return true;
+    }
+    return false;
+}
+
 bool bd_hid_write_record(struct bd_hid_link *link, const uint8_t *record)
 {
     /* crc_value (0x00C) NÃO é recalculado: o device sobrescreve o campo com um

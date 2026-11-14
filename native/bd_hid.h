@@ -46,6 +46,11 @@ void bd_hid_close(struct bd_hid_link *link);
                                   uint16_t length, uint8_t *out, int out_capacity,
                                   int *out_length, volatile int *progress);
 
+/* Comando Type A (byte de comando + u32 no offset 4): 0x09 seleciona o slot,
+ * 0x0A/0x0F trocam de plataforma. true = device ecoou o comando. */
+[[nodiscard]] bool bd_hid_type_a(struct bd_hid_link *link, uint8_t command,
+                                uint32_t parameter);
+
 /* Lê os BD_REC_LEN (0x674) bytes do record de perfil. false = leitura incompleta. */
 [[nodiscard]] bool bd_hid_read_record(struct bd_hid_link *link, uint8_t *record,
                                       volatile int *progress);

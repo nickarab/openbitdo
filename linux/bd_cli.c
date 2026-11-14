@@ -378,6 +378,29 @@ int main(int argc, char **argv)
     }
     if (strcmp(command, "write") == 0)
         return command_write(argc - 2, argv + 2);
+    if (strcmp(command, "send-a") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "uso: %s send-a <comando> <parametro>\n", argv[0]);
+            return 2;
+        }
+        struct bd_hid_device devices[BD_HID_MAX_DEVICES];
+        if (bd_hid_find(devices, BD_HID_MAX_DEVICES) <= 0) {
+            fprintf(stderr, "nenhum controle 2dc8 encontrado\n");
+            return 1;
+        }
+        struct bd_hid_link link = {.fd = -1, .pid = devices[0].pid};
+        if (!bd_hid_open(&link, devices[0].path, devices[0].pid)) {
+            fprintf(stderr, "não abri %s\n", devices[0].path);
+            return 1;
+        }
+        uint8_t cmd = (uint8_t)strtoul(argv[2], nullptr, 0);
+        uint32_t param = (uint32_t)strtoul(argv[3], nullptr, 0);
+        bool acked = bd_hid_type_a(&link, cmd, param);
+        printf("send-a cmd=0x%02x param=%u -> %s\n", cmd, param,
+               acked ? "ACK" : "sem ACK");
+        bd_hid_close(&link);
+        return acked ? 0 : 1;
+    }
     if (strcmp(command, "info") == 0) {
         if (argc != 2) {
             fprintf(stderr, "info não aceita argumentos\n");
