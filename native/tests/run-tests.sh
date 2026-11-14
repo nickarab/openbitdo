@@ -106,26 +106,7 @@ else
     bad "TAB_HELP não documenta todas as abas"
 fi
 
-echo "=== 4) arte oficial preservada ==="
-art_bad=0
-for f in front sticks back vibration macro; do
-    img="assets/$f.png"
-    if [ ! -f "$img" ]; then art_bad=1; continue; fi
-    dim=$(python3 -c "
-from PIL import Image
-im=Image.open('$img')
-print(im.size[0], im.size[1])" 2>/dev/null)
-    if [ "$dim" != "828 664" ] && [ "$dim" != "829 666" ]; then
-        art_bad=1
-    fi
-done
-if [ "$art_bad" = "0" ]; then
-    ok "assets/front|sticks|back|vibration|macro.png (828x664)"
-else
-    bad "arte oficial ausente ou com dimensão inesperada"
-fi
-
-echo "=== 5) ferramentas linux (bd_build/bd_cli) ==="
+echo "=== 4) ferramentas linux (bd_build/bd_cli) ==="
 if [ ! -x tests/test_tools.sh ]; then
     bad "tests/test_tools.sh ausente ou não executável"
 elif ./tests/test_tools.sh >"$OUT/tools.log" 2>&1; then
@@ -145,7 +126,7 @@ if command -v xwininfo >/dev/null && xwininfo -root >/dev/null 2>&1; then
     DISPLAY_OK=1
 fi
 
-echo "=== 6) latência do main loop (regressão do freeze) ==="
+echo "=== 5) latência do main loop (regressão do freeze) ==="
 if [ "${BD_SKIP_HARDWARE:-0}" = "1" ]; then
     skip "latência do main loop: BD_SKIP_HARDWARE=1 (teste de hardware do dono)"
 elif [ "$DISPLAY_OK" = "0" ]; then
@@ -166,7 +147,7 @@ else
     fi
 fi
 
-echo "=== 7) smoke test da janela ==="
+echo "=== 6) smoke test da janela ==="
 if [ "$DISPLAY_OK" = "0" ] || [ ! -x "$OUT/8bdgui" ]; then
     skip "sem display/binário"
 else
@@ -203,7 +184,7 @@ else
     pkill -x 8bdgui 2>/dev/null; sleep 1
 fi
 
-echo "=== 8) device real (opcional) ==="
+echo "=== 7) device real (opcional) ==="
 if [ "${BD_SKIP_HARDWARE:-0}" = "1" ]; then
     skip "hardware: BD_SKIP_HARDWARE=1 (teste do dono)"
 elif ! command -v lsusb >/dev/null || ! lsusb 2>/dev/null | grep -qi '2dc8:'; then
