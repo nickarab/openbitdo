@@ -1,9 +1,11 @@
 CC ?= cc
 PKG_CONFIG ?= pkg-config
 
+# CFLAGS da linha de comando (make CFLAGS=-O3) troca só a otimização: o
+# override mantém o padrão C23 e os warnings, que fazem parte do contrato.
 CFLAGS ?= -O2
-CFLAGS += -std=c23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
-CPPFLAGS += -Inative -MMD -MP
+override CFLAGS += -std=c23 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
+override CPPFLAGS += -Inative -MMD -MP
 
 GTK_CFLAGS := $(shell $(PKG_CONFIG) --cflags gtk4)
 GTK_LIBS := $(shell $(PKG_CONFIG) --libs gtk4)
@@ -37,8 +39,30 @@ $(BUILD)/bd_build: $(BUILD)/bd_build.o $(BUILD)/bd_core.o
 $(BUILD)/bd_watch: $(BUILD)/bd_watch.o
 	$(CC) $(LDFLAGS) -o $@ $^
 
-test: all
+# Testes unitários: sem GTK e sem hardware (test_hid fala com um socketpair).
+TEST_BINARIES := $(BUILD)/test_core $(BUILD)/test_hid
+
+$(BUILD)/%.o: native/tests/%.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/test_core: $(BUILD)/test_core.o $(BUILD)/bd_core.o
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(BUILD)/test_hid: $(BUILD)/test_hid.o $(BUILD)/bd_hid.o $(BUILD)/bd_core.o
+	$(CC) $(LDFLAGS) -o $@ $^
+
+tests: $(TEST_BINARIES)
+
+# Suíte completa: compila tudo com -Werror num diretório próprio e roda os blocos.
+test:
 	native/tests/run-tests.sh
+
+# Só os testes unitários, com AddressSanitizer + UBSan.
+SAN := -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
+test-asan:
+	$(MAKE) BUILD=$(BUILD)/asan CFLAGS="-O1 -g $(SAN)" LDFLAGS="$(SAN)" tests
+	$(BUILD)/asan/test_core
+	$(BUILD)/asan/test_hid
 
 VERSION ?= 0.1.0
 
@@ -50,4 +74,4 @@ clean:
 
 -include $(wildcard $(BUILD)/*.d)
 
-.PHONY: appimage  all test clean
+.PHONY: appimage all tests test test-asan clean

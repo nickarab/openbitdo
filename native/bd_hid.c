@@ -139,8 +139,7 @@ bool bd_hid_read_record(struct bd_hid_link *link, uint8_t *record, volatile int 
     uint32_t offset = 0;
     int consecutive_failures = 0;
     while (offset < BD_REC_LEN) {
-        uint32_t remaining = BD_REC_LEN - offset;
-        uint16_t chunk = remaining > BD_CHUNK_MAX ? BD_CHUNK_MAX : (uint16_t)remaining;
+        const uint16_t chunk = bd_chunk_len(offset);
         uint8_t chunk_data[BD_REPORT_LEN];
         int received = 0;
         const bool acknowledged = bd_hid_execute(link, HID_COMMAND_READ, 0, BD_REC_LEN, offset,
@@ -226,8 +225,7 @@ bool bd_hid_write_record(struct bd_hid_link *link, const uint8_t *record)
     int consecutive_failures = 0;
 
     while (offset < BD_REC_LEN) {
-        uint32_t remaining = BD_REC_LEN - offset;
-        uint16_t chunk = remaining > BD_CHUNK_MAX ? BD_CHUNK_MAX : (uint16_t)remaining;
+        const uint16_t chunk = bd_chunk_len(offset);
         if (bd_hid_execute(link, HID_COMMAND_WRITE, 0, BD_REC_LEN, offset, record + offset,
                            chunk, nullptr, 0, nullptr, nullptr)) {
             offset += chunk;

@@ -220,10 +220,7 @@ static int command_info(void)
 {
     uint32_t offset = 0;
     while (offset < (uint32_t)BD_REC_LEN) {
-        size_t remaining = (size_t)BD_REC_LEN - (size_t)offset;
-        uint16_t chunk = remaining > (size_t)BD_CHUNK_MAX
-                             ? (uint16_t)BD_CHUNK_MAX
-                             : (uint16_t)remaining;
+        const uint16_t chunk = bd_chunk_len(offset);
         if (!bd_hid_execute(link, WRITE_COMMAND, 0, (uint32_t)BD_REC_LEN, offset,
                             record + (size_t)offset, chunk, nullptr, 0, nullptr, nullptr)) {
             fprintf(stderr, "chunk @%u: sem ACK\n", (unsigned)offset);

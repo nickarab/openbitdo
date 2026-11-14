@@ -1,110 +1,90 @@
-# 18 — Matriz de testes atual (snapshot 14/11 01:29)
+# Testes
 
-Substitui `12-testes.md`, que fica como **histórico** (lá: 142 checagens e 6
-verificações; os números não valem mais). Caminhos relativos a `native/`.
-
-## Como rodar
+Tudo roda a partir da raiz do repositório.
 
 ```bash
-cd native && make test                    # = make all + ./tests/run-tests.sh
-cd native && ./tests/run-tests.sh         # sem rebuild do app
-cd native && ./tests/run-tests.sh -v      # liga set -x
-BD_SKIP_HARDWARE=1 ./tests/run-tests.sh   # pula blocos 6 e 8
+make test                          # suíte completa (native/tests/run-tests.sh)
+BD_SKIP_HARDWARE=1 make test       # pula a latência do loop e o device real
+native/tests/run-tests.sh -v       # mesmo, com set -x
+make tests                         # só compila build/test_core e build/test_hid
+make test-asan                     # unitários com AddressSanitizer + UBSan
 ```
 
-O script recompila tudo em `$TMPDIR` com
-`-std=c23 -O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Werror -I.`;
-não usa os binários de `make` para compilar (eles só servem aos blocos 6/7, e
-`find_bin` procura em `build/` antes da raiz de `native/`). Sai com 1 se algum
-bloco der FAIL — SKIP não falha. Última linha: `resultado: N pass, M fail, K skip`.
+`run-tests.sh` compila **pelo Makefile**, com `-Werror`, num `BUILD`
+temporário: os blocos exercitam os mesmos alvos que `make` e o AppImage usam,
+sem tocar no `build/` do usuário. Se o build falha, a suíte para ali com FAIL.
+Sai com 1 se algum bloco falhar; SKIP não falha.
 
-## `tests/test_core.c` — 275 checagens, 8 grupos
-
-Liga só `bd_core.c`: sem GTK, sem libusb, sem hidraw. Quatro `static_assert` no
-topo (record `0x674`, report 64, header 16, 20 teclas) quebram o build antes de
-rodar se uma constante de protocolo mudar.
-
-| grupo | cobre |
-|---|---|
-| record layout | offsets `0x00c 0x010 0x012 0x014 0x074 0x098 0x0b0 0x0c8 0x0e0 0x1dc`; `map_key` 84 B × 3 e `macro_fun` 392 B × 3 fechando em `0x674` |
-| plano de chunks | 1652 = 36×45 + 32; último chunk de 32 B; 37 envios |
-| crc16 | `"123456789"` → `0x916F`, vazio → `0xFFFF`, 8×`0xFF` ≠ `0xFFFF`, `bd_pid_uses_crc` (0x3109/0x3011 sim, 0x3012/0x3106 não) |
-| record fields | little-endian em +0/+1, `0x00c`, flag de 4 B antes do mapa, P1/P2 em 18/19, slot 1 a +84 B, sticks/triggers, float do rumble (roundtrip) |
-| nomes UTF-16LE | acentos (`Ação`), corte em 15 code units, U+1F600 descartado sem sair do slot de 32 B (canário `0xA5`), slots isolados |
-| tabelas | 26 ações, `0x2000`→A, `0x4000000`→P2, desconhecido→0; `bd_key_short` 16=LF, 17=RT (d-pad →), 18=P1, 19=P2; modos 1=DInput, 3=XInput |
-| framing HID | quadro `81 len+1 04`, 19 B com header de 16, padding zero até 64, payload máx 61 (62 rejeitado), vazio = 3 B, parse da resposta em +18, header Tipo C LE (cmd/sub/len/CRC em +6/total/offset) |
-| XUSB / XInput | report neutro, todos os bits de botão, sticks assinados + inversão de Y, rejeita `data[0]!=0` e report curto, layout do rumble (byte alto) |
-
-## `tests/run-tests.sh` — 8 blocos
+## Blocos de `run-tests.sh`
 
 | # | bloco | precisa de |
 |---|---|---|
-| 1 | núcleo: `test_core` (275 checagens) | `gcc` |
-| 2 | build do app em `$TMPDIR` (C23 + GTK4 + libusb, `-Werror`) | `pkg-config` gtk4 + libusb-1.0 |
-| 3 | contrato do painel: 6 greps em `8bdgui.c` — sem `assets/*.png`, sem `cairo_`/`GdkTexture`, sem `GtkDrawingArea`, `build_info_panel`+`build_tab_help`, 3 títulos, as 7 abas em `TAB_HELP` | `grep` |
-| 4 | artes `assets/{front,sticks,back,vibration,macro}.png` em 828×664 (aceita 829×666) | `python3` + Pillow |
-| 5 | `tests/test_tools.sh` (ferramentas linux) | ver abaixo |
-| 6 | latência do main loop com XInput ativo (`BD_LOOP_TEST=1`, `LOOP max_gap_ms` < 250) | display X + binário |
-| 7 | smoke da janela: processo vivo + `xwininfo` vê a janela (sem `xwininfo`, basta o processo vivo) | display X + binário |
-| 8 | device real: XUSB `0x3106` (`xsusb --rumble 0 0`) e HID (`8bdgui --selftest` lê o record) | `lsusb` + hidraw `2dc8` |
+| 1 | `make all tests` com `-std=c23 … -Wsign-conversion -Werror` | `gcc`, GTK4 |
+| 2 | `test_core` — núcleo puro | — |
+| 3 | `test_hid` — transporte HID sobre `socketpair` | — |
+| 4 | `TAB_HELP` do `8bdgui.c` cita as 6 abas | `grep` |
+| 5 | `test_tools.sh` com os binários do bloco 1 | `python3` |
+| 6 | latência do main loop (`BD_LOOP_TEST=1`, gap < 250 ms) | display X |
+| 7 | smoke da janela (processo vivo + `xwininfo`) | display X |
+| 8 | `8bdgui --selftest` lê o record de um hidraw `2dc8` | controle conectado |
 
-O bloco 6 mede o maior intervalo entre iterações do `GMainLoop` com XInput
-ligado: I/O de hidraw na thread da UI estoura o limite (o sintoma original dava
-gaps de centenas de ms e travas de ~94 s).
+`BD_SKIP_HARDWARE=1` pula os blocos 6 e 8. O bloco 7 só depende do display.
 
-## `tests/test_tools.sh` — offline, 7 checagens
+## `test_core` (`native/tests/test_core.c`)
 
-Não abre `/dev/hidraw*`: `bd_build` só escreve arquivo e `bd_cli list` enumera
-sysfs. Compila `linux/bd_build.c` e `linux/bd_cli.c` contra `bd_core.c` +
-`bd_hid.c` com o mesmo C23 e `-Wsign-conversion` (warning = FAIL) e valida o
-record com `python3 struct`:
+Liga só `bd_core.c`. Os offsets do record são conferidos por `static_assert`
+em `bd_core.c` e no topo do teste: mudar uma constante quebra o build.
 
-- 1652 B, `flags=1` ×3, nomes `Profile 1..3`, mode/slot `1/0`;
-- P1=`0x2000`/P2=`0x1000` em +18/+19 e `crc_value=0` — em `0x00C` o device
-  sobrescreve com contador, então a ferramenta não inventa o campo;
-- `--mode 3 --slot 2` desloca o mapa em 84×2 B e mantém P1/P2;
-- ação inexistente → exit ≠ 0; `bd_cli` sem argumentos → exit 2 com uso;
-  `bd_cli list` não trava (limite de 5 s).
-
-Fonte ausente ou build quebrado = SKIP, para separar "lane não entregue" de
-regressão real.
-
-## Teste de mutação (a suíte tem dentes)
-
-Rodado numa cópia do par `bd_core.{c,h}` + `tests/`, em `mktemp -d` — o
-repositório não é editado. Baseline: 275 checagens, 0 falha.
-
-```bash
-cd native && M=$(mktemp -d) && mkdir -p "$M/tests" \
-  && cp bd_core.c bd_core.h "$M"/ && cp tests/test_core.c "$M/tests"/
-cd "$M" && sed -i 's/CRC16_REFLECTED_POLYNOMIAL = 0x8408;/CRC16_REFLECTED_POLYNOMIAL = 0x8400;/' bd_core.c
-gcc -std=c23 -O2 -I. -o t tests/test_core.c bd_core.c && ./t | tail -1
-# 275 checagens, 1 falha(s)
-```
-
-| mutação | resultado medido |
+| grupo | cobre |
 |---|---|
-| polinômio do CRC `0x8408` → `0x8400` | 1 falha (vetor `"123456789"`) |
-| P1/P2 trocados em `bd_key_short` (índices 18/19) | 2 falhas (`test_core.c:243-244`) |
-| P1/P2 trocados em `bd_actions` (máscaras P1↔P2) | 1 falha (`test_core.c:239`, `bd_action_index(0x4000000)`) |
+| plano de chunks | `bd_chunk_len`: 36 × 45 + 32, 37 chunks, 0 no fim e além dele |
+| crc16 | `"123456789"` → `0x916F`, vazio → `0xFFFF`, tabela de PIDs com CRC |
+| record fields | `bd_rd*/bd_wr*` little-endian, posição de P1/P2 e do slot 1 |
+| nomes UTF-16LE | acentos, corte em 15 code units, fora do BMP descartado sem sair dos 32 B do slot |
+| tabelas | ações, `bd_key_short`/`bd_key_long`, `bd_action_value` (caixa, aliases, desconhecido), ida e volta nome → valor → índice |
+| framing HID | frame `81 len+1 04`, limite de 61 B, parse de `02 04`, header Tipo C |
 
-As duas tabelas precisam do teste: trocar as máscaras só aparece no índice da
-ação, e trocar os nomes curtos só aparece em `bd_key_short`.
+## `test_hid` (`native/tests/test_hid.c`)
 
-## Skips e limites
+Um `socketpair(AF_UNIX, SOCK_SEQPACKET)` faz o papel do `/dev/hidraw*`: cada
+`write` é um report de 64 B com fronteira preservada. O lado "device"
+enfileira as respostas antes e confere depois os frames que o host mandou.
 
-- Bloco 6: `BD_SKIP_HARDWARE=1` ou sem display X (`xwininfo -root` falha).
-  Binário ausente ali é **FAIL**, não SKIP.
-- Bloco 7: sem display X ou sem binário. `BD_SKIP_HARDWARE` **não** o cobre —
-  ele sobe o `8bdgui` por 4 s (binário de `build/`, de `native/` ou o compilado
-  no bloco 2) e mata o processo com `pkill` no fim.
-- Bloco 8: `BD_SKIP_HARDWARE=1`, sem `lsusb`/`2dc8`, `0x3106` ausente (XUSB),
-  `xsusb` não compilado, sem hidraw `2dc8` (HID). Sem permissão para abrir o
-  hidraw o resultado é **FAIL** ("HID presente mas leitura do perfil falhou").
-- Offline puro (blocos 1–5) medido com `BD_SKIP_HARDWARE=1` e um `xwininfo`
-  falso no `PATH`: `10 pass, 0 fail, 3 skip`.
-- O alvo `8bdgui` do `Makefile` não usa `-Wsign-conversion` nem `-Werror`; quem
-  impede warning no app é o bloco 2. O `xsusb` é compilado com
-  `-Wno-unused-variable` (tabela legada).
-- `bd_hid.c` não tem teste unitário: abrir, `O_NONBLOCK`+`poll(POLLOUT)`, ACK e
-  commit só são exercitados no bloco 8, com hardware.
+| grupo | cobre |
+|---|---|
+| frames crus | `81 05 00 51 <m>` com o modo no byte 4 e zeros até 64 B; sessão (`81 05 00 21 01` + `0x07`/0, `0x07`/1 + `81 05 00 51 02`) |
+| Type A | cmd em +0, param u32 LE em +4, sem resposta → `false` |
+| Type C | ignora eco de outro cmd, copia de +18 limitado ao report e ao buffer, progress, CRC no header só nos PIDs da tabela, device mudo → `false` |
+| read_record | 37 pedidos com offset/len certos, record igual ao do device, desiste após 2 tentativas no primeiro chunk |
+| write_record | 37 chunks com os dados certos, commit `6`/`0x15`, 3 releituras de 20 B, commit sem eco → `false` |
+
+Os casos de device mudo esperam os timeouts reais (150 ms × 4): o binário
+leva ~4 s.
+
+**Mutações verificadas** (cópia do repositório em `mktemp -d`): subcomando do
+commit, offset do parâmetro do Type A, modo ignorado no `mode_switch`, eco de
+outro cmd aceito, fast-fail 2 → 3, releituras 3 → 2, chunk 45 → 44 e CRC
+ausente no `0x3109` — todas derrubam pelo menos uma checagem.
+
+## `test_tools.sh`
+
+Usa os binários de `BD_BIN_DIR` (o bloco 5 passa os do bloco 1); sozinho,
+compila com o Makefile num diretório temporário. Build quebrado é FAIL.
+
+- `bd_build`: record padrão (1652 B, feature mask ×3, flag da macro em
+  `0x1DC`, nomes, modo/slot `1/0`, P1/P2, `crc_value = 0`); `--mode 3 --slot 2`
+  mexe só no slot 2; `--from` preserva os slots não editados; rejeita ação
+  inexistente, `--mode 4`, `--slot 3`, número inválido, opção sem valor ou
+  desconhecida e `--from` ausente.
+- `bd_cli`: sem argumentos → uso e exit 2; subcomando desconhecido e `mode 9`
+  → exit 2; `write --dry-run` lê o arquivo sem enviar nada e rejeita record com
+  tamanho errado; `list` não trava (limite de 5 s).
+
+## Não coberto
+
+- `bd_usb.c` (troca de modo pelo endpoint vendor do `3106`) só roda com o
+  controle: usbfs não tem dublê simples.
+- `bd_cli patch` lê e grava no device; a lógica de patch ainda não é uma
+  função pura testável (fase 2).
+- A semântica da sessão (`81 05 00 21 01` / `81 05 00 51 02`) está congelada
+  como é hoje; mudar exige validar no hardware.

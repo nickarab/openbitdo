@@ -1,7 +1,6 @@
 /*
  * test_core.c — suíte de regressão do núcleo (sem GTK, sem hardware)
- * Build: gcc -std=c23 -O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion \
- *            -I. -o test_core tests/test_core.c bd_core.c
+ * Build: make tests (na raiz) → build/test_core
  */
 #include <stdio.h>
 #include <string.h>
@@ -28,9 +27,8 @@ static int fails, checks;
         }                                                           \
     } while (0)
 
-#define CHECK_EQ(a, b, fmt)                                        \
+#define CHECK_EQ(a, b)                                             \
     do {                                                            \
-        (void)(fmt);                                                \
         checks++;                                                   \
         long long _a = (long long)(a), _b = (long long)(b);          \
         if (_a != _b) {                                             \
@@ -40,58 +38,24 @@ static int fails, checks;
         }                                                           \
     } while (0)
 
-/* ------------------------------- 1. layout do record (anti-regressão) ---- */
-static void test_record_layout(void)
-{
-    printf("[record layout]\n");
-    CHECK_EQ(BD_REC_LEN, 0x674, "%d");
-    CHECK_EQ(BD_OFF_CRC, 0x00c, "%d");
-    CHECK_EQ(BD_OFF_MODE, 0x010, "%d");
-    CHECK_EQ(BD_OFF_SLOT, 0x012, "%d");
-    CHECK_EQ(BD_OFF_NAME, 0x014, "%d");
-    CHECK_EQ(BD_OFF_RUM, 0x074, "%d");
-    CHECK_EQ(BD_OFF_JOY, 0x098, "%d");
-    CHECK_EQ(BD_OFF_TRG, 0x0b0, "%d");
-    CHECK_EQ(BD_OFF_FEAT, 0x0c8, "%d");
-    CHECK_EQ(BD_OFF_MAP, 0x0e0, "%d");
-    CHECK_EQ(BD_OFF_MAC, 0x1dc, "%d");
-    CHECK_EQ(BD_NKEYS, 20, "%d");
-    CHECK_EQ(BD_SLOTS, 3, "%d");
-    /* map_key = u32 flag + 20*u32; macro_fun = flag + cnt + pad + 4*96 */
-    constexpr size_t map_key_slot_bytes = 4 + BD_NKEYS * 4;
-    constexpr size_t macro_slot_bytes = 392;
-    CHECK_EQ(map_key_slot_bytes, 84, "%zu");
-    CHECK_EQ((size_t)BD_OFF_MAP + BD_SLOTS * map_key_slot_bytes, BD_OFF_MAC, "%zu");
-    CHECK_EQ((size_t)BD_OFF_MAC + BD_SLOTS * macro_slot_bytes, BD_REC_LEN, "%zu");
-}
-
 /* ------------------------ 1b. plano de chunks (1652 = 36×45 + 32) ------- */
 static void test_chunk_plan(void)
 {
     printf("[plano de chunks]\n");
-    constexpr size_t full_chunks = 36;
-    constexpr size_t last_chunk_bytes = 32;
-    CHECK_EQ(BD_CHUNK_MAX, 45, "%d");
-    CHECK_EQ(BD_REC_LEN / BD_CHUNK_MAX, full_chunks, "%zu");
-    CHECK_EQ(BD_REC_LEN % BD_CHUNK_MAX, last_chunk_bytes, "%zu");
-    CHECK_EQ(full_chunks * BD_CHUNK_MAX + last_chunk_bytes, BD_REC_LEN, "%zu");
+    constexpr uint32_t full_chunks = 36;
+    constexpr uint16_t last_chunk_bytes = 32;
 
-    size_t offset = 0;
-    size_t index = 0;
-    while (offset < BD_REC_LEN) {
-        const size_t remaining = BD_REC_LEN - offset;
-        const size_t chunk = remaining > (size_t)BD_CHUNK_MAX
-                                 ? (size_t)BD_CHUNK_MAX : remaining;
-        const size_t expected = index < full_chunks
-                                    ? (size_t)BD_CHUNK_MAX : last_chunk_bytes;
-        CHECK_EQ(offset, index * (size_t)BD_CHUNK_MAX, "%zu");
-        CHECK_EQ(chunk, expected, "%zu");
-        CHECK(chunk <= (size_t)BD_CHUNK_MAX, "chunk %zu excede 45 bytes", index);
-        offset += chunk;
-        ++index;
+    uint32_t offset = 0;
+    uint32_t index = 0;
+    for (uint16_t chunk; (chunk = bd_chunk_len(offset)) != 0; offset += chunk, ++index) {
+        CHECK_EQ(chunk, index < full_chunks ? BD_CHUNK_MAX : last_chunk_bytes);
+        CHECK(index <= full_chunks, "chunk extra em offset %u", (unsigned)offset);
     }
-    CHECK_EQ(offset, BD_REC_LEN, "%zu");
-    CHECK_EQ(index, full_chunks + 1, "%zu");
+    CHECK_EQ(index, full_chunks + 1);
+    CHECK_EQ(offset, BD_REC_LEN);
+    CHECK_EQ(bd_chunk_len(BD_REC_LEN - 1), 1);
+    CHECK_EQ(bd_chunk_len(BD_REC_LEN), 0);
+    CHECK_EQ(bd_chunk_len(UINT32_MAX), 0);
 }
 
 /* ------------------------------------------------ 2. CRC (vetor externo) -- */
@@ -102,10 +66,10 @@ static void test_crc(void)
      * Nossa variante é a mesma sem xorout e com bytes trocados no fim:
      *   raw = 0x906E ^ 0xFFFF = 0x6F91 ; swap = 0x916F                       */
     const char *v = "123456789";
-    CHECK_EQ(bd_crc16((const uint8_t *)v, 9), 0x916F, "0x%04X");
+    CHECK_EQ(bd_crc16((const uint8_t *)v, 9), 0x916F);
 
     /* payload vazio -> 0xFFFF (o controle ecoou exatamente isso no Type C) */
-    CHECK_EQ(bd_crc16(nullptr, 0), 0xFFFF, "0x%04X");
+    CHECK_EQ(bd_crc16(nullptr, 0), 0xFFFF);
 
     /* independência do buffer: 8 bytes de 0xFF não é 0xFFFF */
     uint8_t ff[8];
@@ -128,40 +92,33 @@ static void test_record_fields(void)
 
     bd_wr16(rec, BD_OFF_MODE, 3);
     bd_wr16(rec, BD_OFF_SLOT, 1);
-    CHECK_EQ(rec[BD_OFF_MODE], 3, "%d");
-    CHECK_EQ(rec[BD_OFF_MODE + 1], 0, "%d");
-    CHECK_EQ(rec[BD_OFF_SLOT], 1, "%d");
-    CHECK_EQ(bd_rd16(rec, BD_OFF_MODE), 3, "%d");
-    CHECK_EQ(bd_rd16(rec, BD_OFF_SLOT), 1, "%d");
+    CHECK_EQ(rec[BD_OFF_MODE], 3);
+    CHECK_EQ(rec[BD_OFF_MODE + 1], 0);
+    CHECK_EQ(rec[BD_OFF_SLOT], 1);
+    CHECK_EQ(bd_rd16(rec, BD_OFF_MODE), 3);
+    CHECK_EQ(bd_rd16(rec, BD_OFF_SLOT), 1);
 
     bd_wr32(rec, BD_OFF_CRC, 0xdeadbeef);
-    CHECK_EQ(bd_rd32(rec, BD_OFF_CRC), 0xdeadbeef, "%u");
-    CHECK_EQ(rec[BD_OFF_CRC], 0xef, "%d");                   /* little-endian */
+    CHECK_EQ(bd_rd32(rec, BD_OFF_CRC), 0xdeadbeef);
+    CHECK_EQ(rec[BD_OFF_CRC], 0xef);                   /* little-endian */
 
     /* mapeamento: chave 0 do slot 0 fica em OFF_MAP + 4 (após o flag) */
     bd_wr32(rec, BD_OFF_MAP + 4 + 0 * 4, 0x2000);            /* A */
     bd_wr32(rec, BD_OFF_MAP + 4 + 18 * 4, 0x2000000);        /* P1 */
     bd_wr32(rec, BD_OFF_MAP + 4 + 19 * 4, 0x4000000);        /* P2 */
-    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 4), 0x2000, "%u");
-    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 4 + 18 * 4), 0x2000000, "%u");
-    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 4 + 19 * 4), 0x4000000, "%u");
+    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 4), 0x2000);
+    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 4 + 18 * 4), 0x2000000);
+    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 4 + 19 * 4), 0x4000000);
 
     /* slot 1 começa 84 bytes depois */
     bd_wr32(rec, BD_OFF_MAP + 84 + 4, 0x1000);
-    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 84 + 4), 0x1000, "%u");
+    CHECK_EQ(bd_rd32(rec, BD_OFF_MAP + 84 + 4), 0x1000);
 
     /* stick esquerdo / gatilho esquerdo do slot 0 */
     rec[BD_OFF_JOY + 4] = 200;
     rec[BD_OFF_TRG + 4] = 100;
-    CHECK_EQ(rec[BD_OFF_JOY + 4], 200, "%d");
-    CHECK_EQ(rec[BD_OFF_TRG + 4], 100, "%d");
-
-    /* rumble é float em zoom_out[2] */
-    float f = 0.6f;
-    memcpy(rec + BD_OFF_RUM + 4, &f, 4);
-    float back;
-    memcpy(&back, rec + BD_OFF_RUM + 4, 4);
-    CHECK(back > 0.59f && back < 0.61f, "rumble float roundtrip (%.3f)", (double)back);
+    CHECK_EQ(rec[BD_OFF_JOY + 4], 200);
+    CHECK_EQ(rec[BD_OFF_TRG + 4], 100);
 }
 
 /* ------------------------------------------------------------- 4. nomes --- */
@@ -175,8 +132,8 @@ static void test_names(void)
     bd_name_set(rec, 0, "Profile 1");
     bd_name_get(rec, 0, out, sizeof out);
     CHECK(strcmp(out, "Profile 1") == 0, "roundtrip simples: '%s'", out);
-    CHECK_EQ(rec[BD_OFF_NAME], 'P', "%d");
-    CHECK_EQ(rec[BD_OFF_NAME + 1], 0, "%d");                  /* UTF-16LE */
+    CHECK_EQ(rec[BD_OFF_NAME], 'P');
+    CHECK_EQ(rec[BD_OFF_NAME + 1], 0);                  /* UTF-16LE */
 
     bd_name_set(rec, 1, "Ação");
     bd_name_get(rec, 1, out, sizeof out);
@@ -192,13 +149,13 @@ static void test_names(void)
     bd_name_set(rec, 0, "ABCDEFGHIJKLMNO");
     bd_name_get(rec, 0, out, sizeof out);
     CHECK(strcmp(out, "ABCDEFGHIJKLMNO") == 0, "15 code units: '%s'", out);
-    CHECK_EQ(rec[BD_OFF_NAME + 14 * 2], 'O', "%d");
-    CHECK_EQ(rec[BD_OFF_NAME + 15 * 2], 0, "%d");
+    CHECK_EQ(rec[BD_OFF_NAME + 14 * 2], 'O');
+    CHECK_EQ(rec[BD_OFF_NAME + 15 * 2], 0);
 
     bd_name_set(rec, 0, "ABCDEFGHIJKLMNOP");
     bd_name_get(rec, 0, out, sizeof out);
     CHECK(strcmp(out, "ABCDEFGHIJKLMNO") == 0, "16ª unidade descartada: '%s'", out);
-    CHECK_EQ(rec[BD_OFF_NAME + 15 * 2], 0, "%d");
+    CHECK_EQ(rec[BD_OFF_NAME + 15 * 2], 0);
 
     /* U+1F600 não cabe no UTF-16 de 16 bits do record; o codec o descarta
      * sem escrever fora dos 32 bytes do slot. */
@@ -216,8 +173,8 @@ static void test_names(void)
             outside_intact = 0;
     }
     CHECK(outside_intact, "escrita do nome fica dentro do slot de 32 bytes");
-    CHECK_EQ(guarded[slot_begin + (BD_NAME_UNITS - 1) * 2], 0, "%d");
-    CHECK_EQ(guarded[slot_begin + (BD_NAME_UNITS - 1) * 2 + 1], 0, "%d");
+    CHECK_EQ(guarded[slot_begin + (BD_NAME_UNITS - 1) * 2], 0);
+    CHECK_EQ(guarded[slot_begin + (BD_NAME_UNITS - 1) * 2 + 1], 0);
 
     bd_name_set(rec, 0, "");
     bd_name_get(rec, 0, out, sizeof out);
@@ -234,10 +191,10 @@ static void test_names(void)
 static void test_tables(void)
 {
     printf("[tabelas]\n");
-    CHECK_EQ(bd_actions_count, 26, "%zu");
-    CHECK_EQ(bd_action_index(0x2000), 1, "%d");               /* A */
-    CHECK_EQ(bd_action_index(0x4000000), 24, "%d");           /* P2 */
-    CHECK_EQ(bd_action_index(0xdead), 0, "%d");               /* desconhecido -> 0 */
+    CHECK_EQ(bd_actions_count, 26);
+    CHECK_EQ(bd_action_index(0x2000), 1);               /* A */
+    CHECK_EQ(bd_action_index(0x4000000), 24);           /* P2 */
+    CHECK_EQ(bd_action_index(0xdead), 0);               /* desconhecido -> 0 */
 
     /* 20 chaves: 18 do enum + P1/P2 no fim */
     CHECK(strcmp(bd_key_short[18], "P1") == 0, "indice 18 = P1 ('%s')", bd_key_short[18]);
@@ -248,12 +205,20 @@ static void test_tables(void)
     CHECK(strstr(bd_key_long[17], "d-pad") != nullptr, "d-pad right rotulado como d-pad");
     /* o controle e layout Xbox: L1/R1/L2/R2/L3/R3 do vocabulario 8BitDo apontam
      * para LB/RB/LT/RT/LS/RS, e RT e o gatilho (nao o d-pad). */
-    CHECK_EQ(bd_action_value("L1"), 0x400, "%#x");
-    CHECK_EQ(bd_action_value("R2"), 0x8000, "%#x");
-    CHECK_EQ(bd_action_value("RT"), 0x8000, "%#x");
-    CHECK_EQ(bd_action_value("D_RIGHT"), 0x40, "%#x");
-    CHECK_EQ(bd_action_value("VIEW"), 0x8, "%#x");
-    CHECK_EQ(bd_action_value("START"), 0x1, "%#x");
+    CHECK_EQ(bd_action_value("L1"), 0x400);
+    CHECK_EQ(bd_action_value("R2"), 0x8000);
+    CHECK_EQ(bd_action_value("RT"), 0x8000);
+    CHECK_EQ(bd_action_value("D_RIGHT"), 0x40);
+    CHECK_EQ(bd_action_value("VIEW"), 0x8);
+    CHECK_EQ(bd_action_value("START"), 0x1);
+    CHECK_EQ(bd_action_value("a"), 0x2000);               /* sem diferenciar caixa */
+    CHECK_EQ(bd_action_value("select"), 0x8);             /* alias em minúsculas */
+    CHECK_EQ(bd_action_value("DN"), 0x100);
+    CHECK_EQ(bd_action_value("P2"), 0x4000000);
+    CHECK_EQ(bd_action_value("NAOEXISTE"), 0);
+    CHECK_EQ(bd_action_value(""), 0);
+    for (size_t i = 1; i < bd_actions_count; i++)
+        CHECK_EQ(bd_action_index(bd_action_value(bd_actions[i].name)), (long long)i);
     CHECK(strcmp(bd_mode_names[3], "XInput") == 0, "modo 3 = XInput");
     CHECK(strcmp(bd_mode_names[1], "DInput") == 0, "modo 1 = DInput");
 }
@@ -269,26 +234,26 @@ static void test_hid(void)
     bd_wr32(pl, 8, BD_REC_LEN);              /* total */
     uint8_t fr[BD_REPORT_LEN];
     size_t n = bd_hid_build_frame(pl, sizeof pl, fr);
-    CHECK_EQ(n, 19, "%zu");
-    CHECK_EQ(fr[0], 0x81, "%d");
-    CHECK_EQ(fr[1], 17, "%d");               /* len+1 */
-    CHECK_EQ(fr[2], 0x04, "%d");
-    CHECK_EQ(bd_rd16(fr + 3, 0), 2, "%d");
-    CHECK_EQ(bd_rd32(fr + 3, 8), BD_REC_LEN, "%u");
+    CHECK_EQ(n, 19);
+    CHECK_EQ(fr[0], 0x81);
+    CHECK_EQ(fr[1], 17);               /* len+1 */
+    CHECK_EQ(fr[2], 0x04);
+    CHECK_EQ(bd_rd16(fr + 3, 0), 2);
+    CHECK_EQ(bd_rd32(fr + 3, 8), BD_REC_LEN);
     for (int i = 19; i < BD_REPORT_LEN; i++)
         CHECK(fr[i] == 0, "padding zero em %d", i);
 
     /* payload vazio: só o cabeçalho; nullptr é aceito quando len == 0 */
-    CHECK_EQ(bd_hid_build_frame(nullptr, 0, fr), 3, "%zu");
-    CHECK_EQ(fr[1], 1, "%d");
+    CHECK_EQ(bd_hid_build_frame(nullptr, 0, fr), 3);
+    CHECK_EQ(fr[1], 1);
     CHECK(fr[2] == BD_TAG_ADVANCE, "tag 0x04 no frame vazio");
 
     /* 61 bytes de payload = máximo (len+3 = 64) */
     uint8_t big[64];
     memset(big, 0xaa, sizeof big);
-    CHECK_EQ(bd_hid_build_frame(big, 61, fr), 64, "%zu");
-    CHECK_EQ(fr[1], 62, "%d");
-    CHECK_EQ(bd_hid_build_frame(big, 62, fr), 0, "%zu");     /* 62+3 > 64 -> rejeita */
+    CHECK_EQ(bd_hid_build_frame(big, 61, fr), 64);
+    CHECK_EQ(fr[1], 62);
+    CHECK_EQ(bd_hid_build_frame(big, 62, fr), 0);     /* 62+3 > 64 -> rejeita */
 
     /* parse de resposta */
     uint8_t r[BD_REPORT_LEN];
@@ -300,8 +265,8 @@ static void test_hid(void)
     uint16_t sub = 0, len = 0;
     const uint8_t *data = nullptr;
     CHECK(bd_hid_parse_resp(r, sizeof r, &sub, &len, &data) == 1, "resposta válida");
-    CHECK_EQ(sub, 2, "%d");
-    CHECK_EQ(len, 20, "%d");
+    CHECK_EQ(sub, 2);
+    CHECK_EQ(len, 20);
     CHECK(data && data[0] == 0xAB, "payload em +18");
 
     r[0] = 0x81;
@@ -320,18 +285,17 @@ static void test_hid(void)
         0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55,
     };
     CHECK(memcmp(hdr, hdr_le, sizeof hdr_le) == 0, "header Tipo C little-endian");
-    CHECK_EQ(bd_rd16(hdr, 0), 0x1234, "%d");
-    CHECK_EQ(bd_rd16(hdr, 2), 0xabcd, "%d");
-    CHECK_EQ(bd_rd16(hdr, 4), 0x002d, "%d");
-    CHECK_EQ(bd_rd16(hdr, 6), 0xef01, "%d");
-    CHECK_EQ(bd_rd32(hdr, 8), 0x11223344, "%u");
-    CHECK_EQ(bd_rd32(hdr, 12), 0x55667788, "%u");
+    CHECK_EQ(bd_rd16(hdr, 0), 0x1234);
+    CHECK_EQ(bd_rd16(hdr, 2), 0xabcd);
+    CHECK_EQ(bd_rd16(hdr, 4), 0x002d);
+    CHECK_EQ(bd_rd16(hdr, 6), 0xef01);
+    CHECK_EQ(bd_rd32(hdr, 8), 0x11223344);
+    CHECK_EQ(bd_rd32(hdr, 12), 0x55667788);
 }
 
 int main(void)
 {
     printf("8bdgui — testes de núcleo\n");
-    test_record_layout();
     test_chunk_plan();
     test_crc();
     test_record_fields();

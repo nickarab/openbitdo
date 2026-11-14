@@ -459,6 +459,14 @@ static constexpr size_t TYPE_C_OFF_OFFSET = 12;
 
 static_assert(BD_HDR_LEN + BD_CHUNK_MAX + HID_FRAME_HEADER_BYTES <= BD_REPORT_LEN);
 
+uint16_t bd_chunk_len(uint32_t offset)
+{
+    if (offset >= BD_REC_LEN)
+        return 0;
+    const uint32_t remaining = BD_REC_LEN - offset;
+    return (uint16_t)(remaining < BD_CHUNK_MAX ? remaining : BD_CHUNK_MAX);
+}
+
 size_t bd_hid_build_frame(const uint8_t *restrict payload, size_t payload_length,
                           uint8_t out[restrict BD_REPORT_LEN])
 {

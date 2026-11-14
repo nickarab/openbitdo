@@ -76,6 +76,10 @@ extern const char *const bd_key_long[BD_NKEYS];
 extern const char *const bd_mode_names[4];
 [[nodiscard]] int bd_action_index(uint32_t value);
 
+/* Tamanho do chunk de read/write que começa em offset: BD_CHUNK_MAX até o fim
+ * do record (1652 = 36 × 45 + 32); 0 quando offset >= BD_REC_LEN. */
+[[nodiscard]] uint16_t bd_chunk_len(uint32_t offset);
+
 /* [0x81][len+1][0x04][payload] em 64 bytes; 0 se o payload não couber. */
 [[nodiscard]] size_t bd_hid_build_frame(const uint8_t *restrict payload,
                                         size_t payload_length,
