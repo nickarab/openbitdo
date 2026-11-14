@@ -70,8 +70,9 @@ MAP_SLOT_SIZE = 4 + 20 * 4
 record = open(sys.argv[1], "rb").read()
 assert len(record) == RECORD_LEN, f"tamanho {len(record)} != {RECORD_LEN}"
 
+# 0x000 é o feature mask exigido pelo firmware; 0x004/0x008 ficam "desabilitado".
 flags = struct.unpack_from("<3I", record, OFF_FLAG)
-assert flags == (1, 1, 1), f"flags={flags}"
+assert flags == (0x20200911, 0xFFFFFFFF, 0xFFFFFFFF), f"flags={[hex(v) for v in flags]}"
 
 names = []
 for slot in range(3):
@@ -83,6 +84,9 @@ assert names == ["Profile 1", "Profile 2", "Profile 3"], f"nomes={names!r}"
 mode, slot = struct.unpack_from("<HH", record, OFF_MODE)
 assert (mode, slot) == (1, 0), f"modo/slot padrão={mode}/{slot}"
 
+# cur_slot é gravado para ativar o perfil (o app oficial também escreve 0)
+assert slot == 0, f"cur_slot={slot}"
+
 map_base = OFF_MAP + slot * MAP_SLOT_SIZE + 4
 p1, p2 = struct.unpack_from("<II", record, map_base + 18 * 4)
 assert (p1, p2) == (0x2000, 0x1000), f"P1/P2=0x{p1:x}/0x{p2:x}"
@@ -92,7 +96,7 @@ crc = struct.unpack_from("<I", record, OFF_CRC)[0]
 assert crc == 0, f"crc_value=0x{crc:x}: bd_build não deve inventar o campo"
 PY
 then
-    ok "record: 1652 B, flags=1, nomes, modo/slot, P1/P2 e crc_value=0"
+    ok "record: 1652 B, feature mask, nomes, modo/slot ativo, P1/P2 e crc_value=0"
 else
     bad "record inválido" "$(tail -n 1 "$OUT/validate.err")"
 fi

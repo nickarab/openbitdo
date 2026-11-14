@@ -14,7 +14,8 @@
 
 #include "bd_core.h"
 
-static constexpr uint32_t CONFIG_ENABLED = 1;
+static constexpr uint32_t CONFIG_ENABLED = 0x20200911u;  /* medido */
+static constexpr uint32_t CONFIG_DISABLED = 0xFFFFFFFFu; /* slots não escritos */
 static constexpr uint8_t RANGE_MIN = 0;
 static constexpr uint8_t RANGE_MAX = 255;
 static constexpr size_t RUMBLE_SLOT_SIZE = 12;            /* flag + zoom_out[2] */
@@ -28,20 +29,36 @@ static constexpr size_t MODE_COUNT = sizeof bd_mode_names / sizeof bd_mode_names
  * STAR (12) usa KEY_MENU_MAP 0x10000 e HOME (13) usa 0x8000
  * (09-native-gui.md); P1/P2 (18/19) não emitem nada por padrão.
  */
+/* Mapa identidade: cada entrada física emite a si mesma (ordem MAP_KEY_E + P1/P2).
+ * Valores copiados do record que o app oficial grava — conferidos no hardware. */
 static const uint32_t identity_map[BD_NKEYS] = {
-    0x2000, 0x1000, 0x10, 0x20,     /* A B X Y */
-    0x400, 0x800, 0x4000, 0x20000,  /* L1 R1 L2 R2 */
-    0x1, 0x2, 0x4, 0x8,             /* L3 R3 SELECT START */
-    0x10000, 0x8000,                /* STAR HOME */
-    0x200, 0x100, 0x80, 0x40,       /* UP DOWN LEFT RIGHT */
-    0x0, 0x0,                       /* P1 P2 */
+    0x2000,   /* A */
+    0x1000,   /* B */
+    0x10,     /* X */
+    0x20,     /* Y */
+    0x400,    /* L1 */
+    0x800,    /* R1 */
+    0x4000,   /* L2 */
+    0x8000,   /* R2 */
+    0x2,      /* L3 */
+    0x4,      /* R3 */
+    0x8,      /* SELECT */
+    0x1,      /* START */
+    0x10000,  /* STAR */
+    0x20000,  /* HOME */
+    0x200,    /* UP */
+    0x100,    /* DOWN */
+    0x80,     /* LEFT */
+    0x40,     /* RIGHT */
+    0x0,      /* P1 — sem ação por padrão */
+    0x0,      /* P2 — sem ação por padrão */
 };
 
-static void set_full_range(uint8_t *record, size_t base)
+static void set_full_range(uint8_t *record, size_t base, size_t enabled_slot)
 {
     for (size_t slot = 0; slot < BD_SLOTS; ++slot) {
         const size_t at = base + slot * RANGE_SLOT_SIZE;
-        bd_wr32(record, at, CONFIG_ENABLED);
+        bd_wr32(record, at, slot == enabled_slot ? CONFIG_ENABLED : CONFIG_DISABLED);
         /* range[0] = eixo esquerdo, range[1] = direito; cada par é início/fim */
         record[at + 4] = RANGE_MIN;
         record[at + 5] = RANGE_MAX;
@@ -62,6 +79,10 @@ static bool parse_number(const char *text, unsigned long *out)
 
 static bool parse_action(const char *text, uint32_t *out)
 {
+    if (strcasecmp(text, "none") == 0 || strcasecmp(text, "n") == 0) {
+        *out = 0;
+        return true;
+    }
     unsigned long numeric = 0;
     if (parse_number(text, &numeric)) {
         *out = (uint32_t)numeric;
@@ -142,21 +163,21 @@ int main(int argc, char **argv)
     bd_wr16(record, BD_OFF_SLOT, (uint16_t)slot);
 
     for (size_t s = 0; s < BD_SLOTS; ++s) {
-        bd_wr32(record, BD_OFF_FLAG + s * 4, CONFIG_ENABLED);
-        bd_wr32(record, BD_OFF_RUM + s * RUMBLE_SLOT_SIZE, CONFIG_ENABLED);
-        bd_wr32(record, BD_OFF_FEAT + s * FEATURE_SLOT_SIZE, CONFIG_ENABLED);
+        bd_wr32(record, BD_OFF_FLAG + s * 4, s == (size_t)slot ? BD_FEATURE_MASK : CONFIG_DISABLED);
+        bd_wr32(record, BD_OFF_RUM + s * RUMBLE_SLOT_SIZE, s == (size_t)slot ? CONFIG_ENABLED : CONFIG_DISABLED);
+        bd_wr32(record, BD_OFF_FEAT + s * FEATURE_SLOT_SIZE, s == (size_t)slot ? CONFIG_ENABLED : CONFIG_DISABLED);
 
         char name[BD_NAME_UNITS];
         snprintf(name, sizeof name, "Profile %zu", s + 1);
         bd_name_set(record, (int)s, name);
     }
 
-    set_full_range(record, BD_OFF_JOY);
-    set_full_range(record, BD_OFF_TRG);
+    set_full_range(record, BD_OFF_JOY, (size_t)slot);
+    set_full_range(record, BD_OFF_TRG, (size_t)slot);
 
     for (size_t s = 0; s < BD_SLOTS; ++s) {
         const size_t at = BD_OFF_MAP + s * MAP_SLOT_SIZE;
-        bd_wr32(record, at, CONFIG_ENABLED);
+        bd_wr32(record, at, s == (size_t)slot ? CONFIG_ENABLED : CONFIG_DISABLED);
         for (size_t key = 0; key < BD_NKEYS; ++key)
             bd_wr32(record, at + 4 + key * 4, identity_map[key]);
     }

@@ -296,34 +296,16 @@ enum bd_action_id {
 };
 
 const struct bd_action bd_actions[] = {
-    [BD_ACTION_NONE] = { .name = "— (nenhum)", .value = 0 },
-    [BD_ACTION_A] = { .name = "A", .value = BD_MASK_A },
-    [BD_ACTION_B] = { .name = "B", .value = BD_MASK_B },
-    [BD_ACTION_X] = { .name = "X", .value = BD_MASK_X },
-    [BD_ACTION_Y] = { .name = "Y", .value = BD_MASK_Y },
-    [BD_ACTION_L1] = { .name = "L1", .value = BD_MASK_L1 },
-    [BD_ACTION_R1] = { .name = "R1", .value = BD_MASK_R1 },
-    [BD_ACTION_L2] = { .name = "L2", .value = BD_MASK_L2 },
-    [BD_ACTION_R2] = { .name = "R2", .value = BD_MASK_R2 },
-    [BD_ACTION_L3] = { .name = "L3", .value = BD_MASK_L3 },
-    [BD_ACTION_R3] = { .name = "R3", .value = BD_MASK_R3 },
-    [BD_ACTION_SELECT] = { .name = "SELECT", .value = BD_MASK_SELECT },
-    [BD_ACTION_START] = { .name = "START", .value = BD_MASK_START },
-    [BD_ACTION_HOME] = { .name = "HOME", .value = BD_MASK_HOME },
-    [BD_ACTION_MENU] = { .name = "MENU", .value = BD_MASK_MENU },
-    [BD_ACTION_BT_CON] = { .name = "BT_CON", .value = BD_MASK_BT_CON },
-    [BD_ACTION_UP] = { .name = "UP", .value = BD_MASK_UP },
-    [BD_ACTION_DOWN] = { .name = "DOWN", .value = BD_MASK_DOWN },
-    [BD_ACTION_LEFT] = { .name = "LEFT", .value = BD_MASK_LEFT },
-    [BD_ACTION_RIGHT] = { .name = "RIGHT", .value = BD_MASK_RIGHT },
-    [BD_ACTION_SCREENSHOT] = { .name = "SCREENSHOT", .value = BD_MASK_SCREENSHOT },
-    [BD_ACTION_TURBO_SINGLE] = { .name = "TURBO_SINGLE", .value = BD_MASK_TURBO_SINGLE },
-    [BD_ACTION_TURBO_AUTO] = { .name = "TURBO_AUTO", .value = BD_MASK_TURBO_AUTO },
-    [BD_ACTION_P1] = { .name = "P1", .value = BD_MASK_P1 },
-    [BD_ACTION_P2] = { .name = "P2", .value = BD_MASK_P2 },
-    [BD_ACTION_SWAP] = { .name = "SWAP", .value = BD_MASK_SWAP },
+    {"— (nenhum)", 0x0},
+    /* valores medidos no record que o app oficial grava (map identidade) */
+    {"A", 0x2000}, {"B", 0x1000}, {"X", 0x10}, {"Y", 0x20},
+    {"L1", 0x400}, {"R1", 0x800}, {"L2", 0x4000}, {"R2", 0x8000},
+    {"L3", 0x2}, {"R3", 0x4}, {"SELECT", 0x8}, {"START", 0x1},
+    {"HOME", 0x20000}, {"STAR", 0x10000}, {"BT_CON", 0x40000},
+    {"UP", 0x200}, {"DOWN", 0x100}, {"LEFT", 0x80}, {"RIGHT", 0x40},
+    {"SCREENSHOT", 0x400000}, {"TURBO_SINGLE", 0x800000}, {"TURBO_AUTO", 0x1000000},
+    {"P1", 0x2000000}, {"P2", 0x4000000}, {"SWAP", 0x8000000},
 };
-
 const size_t bd_actions_count = sizeof bd_actions / sizeof bd_actions[0];
 
 static_assert(sizeof bd_actions / sizeof bd_actions[0] == (size_t)BD_ACTION_COUNT);

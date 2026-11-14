@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Feature mask que o firmware exige no início do record (ENABLE_MODIFY_FLAG). */
+constexpr uint32_t BD_FEATURE_MASK = 0x20200911u;   /* medido no record do app oficial */
+
 enum bd_usb_id {
     BD_VID = 0x2DC8,
     BD_PID_DONGLE = 0x3109,   /* "8BitDo IDLE": canal HID 0xFFA0 */
